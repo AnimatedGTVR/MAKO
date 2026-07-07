@@ -1,0 +1,23 @@
+// A simple one-question quiz.
+// Demonstrates: input, string comparison, if/else.
+
+script "Quiz";
+
+main() {
+    print "Welcome to the MAKO Quiz!";
+    print "Answer the question below.";
+    print "";
+
+    answer = input "What language is this? ";
+
+    if answer == "MAKO" {
+        print "Correct! Well done.";
+    }
+    else if answer == "mako" {
+        print "Almost! It is MAKO (uppercase).";
+    }
+    else {
+        print "Wrong answer: " + answer;
+        print "The correct answer is: MAKO";
+    }
+}

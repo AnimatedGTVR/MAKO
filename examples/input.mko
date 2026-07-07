@@ -1,0 +1,14 @@
+// Reading input from the user and responding to it.
+
+script "Input Test";
+
+main() {
+    name = input "What is your name? ";
+
+    if name == "" {
+        print "No name given.";
+    }
+    else {
+        print "Hello " + name + "!";
+    }
+}

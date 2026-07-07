@@ -1,0 +1,29 @@
+// Boolean values and logical negation with !
+
+script "Booleans";
+
+main() {
+    sunny = true;
+    raining = false;
+
+    print "sunny   = " + sunny;
+    print "raining = " + raining;
+    print "!sunny  = " + !sunny;
+
+    if sunny {
+        print "It is a sunny day.";
+    }
+
+    if !raining {
+        print "No rain today.";
+    }
+
+    // Booleans work with ==
+    if sunny == true {
+        print "sunny is true";
+    }
+
+    if raining == false {
+        print "raining is false";
+    }
+}

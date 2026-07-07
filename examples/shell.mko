@@ -1,0 +1,23 @@
+// Running shell commands from MAKO.
+// Demonstrates: run, string joining, input.
+
+script "Shell";
+
+main() {
+    print "System information:";
+    run "uname -sr";
+
+    print "";
+    print "Current directory:";
+    run "pwd";
+
+    print "";
+    folder = input "List files in which folder? (leave blank for current) ";
+
+    if folder == "" {
+        run "ls -lh";
+    }
+    else {
+        run "ls -lh " + folder;
+    }
+}

@@ -1,0 +1,22 @@
+// Temperature converter — Celsius to Fahrenheit and back.
+// Demonstrates: numeric input, math expressions, if/else if/else.
+
+script "Temperature Converter";
+
+main() {
+    unit = input "Convert from (C or F)? ";
+    value = input "Enter temperature: ";
+
+    if unit == "C" {
+        result = value * 9 / 5 + 32;
+        print value + " C = " + result + " F";
+    }
+    else if unit == "F" {
+        result = (value - 32) * 5 / 9;
+        print value + " F = " + result + " C";
+    }
+    else {
+        print "Unknown unit: " + unit;
+        print "Please enter C or F.";
+    }
+}

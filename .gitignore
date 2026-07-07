@@ -1,0 +1,23 @@
+# .NET build outputs
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.DotSettings.user
+
+# Publish output
+publish/
+out/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+*.swp
+*~
+
+# MAKO-specific
+*.mko.log

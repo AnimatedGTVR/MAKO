@@ -1,0 +1,7 @@
+// The simplest MAKO program.
+
+script "Hello";
+
+main() {
+    print "Hello from MAKO";
+}

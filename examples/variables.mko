@@ -1,0 +1,29 @@
+// Variable types and assignment.
+// MAKO is dynamically typed — variables hold whatever you put in them.
+
+script "Variables";
+
+main() {
+    // Strings
+    name = "MAKO";
+    version = "0.1";
+
+    // Numbers (integers and decimals are both just numbers)
+    year = 2026;
+    pi   = 3.14159;
+
+    // Booleans
+    active = true;
+    done   = false;
+
+    print "Language : " + name;
+    print "Version  : " + version;
+    print "Year     : " + year;
+    print "Pi       : " + pi;
+    print "Active   : " + active;
+    print "Done     : " + done;
+
+    // Variables can be reassigned at any time
+    name = "Something Else";
+    print "Name changed to: " + name;
+}

@@ -1,0 +1,29 @@
+// A more complete greeting program.
+// Demonstrates: input, string joining, if/else if/else.
+
+script "Greeter";
+
+main() {
+    name = input "Enter your name: ";
+    time = input "Is it morning, afternoon, or evening? ";
+
+    if time == "morning" {
+        greeting = "Good morning";
+    }
+    else if time == "afternoon" {
+        greeting = "Good afternoon";
+    }
+    else if time == "evening" {
+        greeting = "Good evening";
+    }
+    else {
+        greeting = "Hello";
+    }
+
+    if name == "" {
+        print greeting + ", stranger!";
+    }
+    else {
+        print greeting + ", " + name + "!";
+    }
+}
