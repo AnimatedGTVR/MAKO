@@ -1,0 +1,39 @@
+script "Functions";
+
+fn greet(name) {
+    return "Hello, " + name + "!";
+}
+
+fn factorial(n) {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn clamp(value, lo, hi) {
+    if value < lo { return lo; }
+    if value > hi { return hi; }
+    return value;
+}
+
+main() {
+    print greet("World");
+    print greet("MAKO");
+
+    print "---";
+    print "5! = " + factorial(5);
+    print "10! = " + factorial(10);
+
+    print "---";
+    print clamp(3, 0, 10);    // 3
+    print clamp(-5, 0, 10);   // 0
+    print clamp(99, 0, 10);   // 10
+
+    print "---";
+    print "sqrt(16) = " + sqrt(16);
+    print "abs(-7) = " + abs(-7);
+    print "type(42) = " + type(42);
+    print "type(\"hi\") = " + type("hi");
+    print "len(\"MAKO\") = " + len("MAKO");
+}

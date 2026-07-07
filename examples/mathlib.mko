@@ -1,0 +1,28 @@
+namespace Math;
+
+fn add(a, b) {
+    return a + b;
+}
+
+fn sub(a, b) {
+    return a - b;
+}
+
+fn clamp(v, lo, hi) {
+    if v < lo { return lo; }
+    if v > hi { return hi; }
+    return v;
+}
+
+fn factorial(n) {
+    if n <= 1 { return 1; }
+    return n * Math.factorial(n - 1);
+}
+
+fn sum(nums) {
+    total = 0;
+    for n in nums {
+        total += n;
+    }
+    return total;
+}

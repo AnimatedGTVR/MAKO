@@ -1,0 +1,48 @@
+script "v0.02 Feature Showcase";
+
+main() {
+    // const
+    const PI = 3.14159;
+    const GREETING = "Hello";
+    print "PI = {PI}";
+
+    // string interpolation
+    name = "MAKO";
+    version = "0.02";
+    print "Welcome to {name} v{version}!";
+    print "Pi squared is roughly {PI * PI}";
+
+    // range
+    print "---";
+    for i in range(5) {
+        printnl "{i} ";
+    }
+    print "";
+
+    for i in range(1, 6) {
+        printnl "{i} ";
+    }
+    print "";
+
+    // range with step
+    evens = range(0, 10, 2);
+    print evens;
+
+    // assert
+    print "---";
+    assert(PI > 3, "PI should be > 3");
+    assert(len("MAKO") == 4, "length check");
+    print "All assertions passed.";
+
+    // exit (commented out so the rest of the demo runs)
+    // exit(0);
+
+    // combined: range + interpolation + const
+    print "---";
+    const MAX = 10;
+    squares = [];
+    for i in range(1, MAX + 1) {
+        push(squares, i * i);
+    }
+    print "Squares 1-{MAX}: {squares}";
+}

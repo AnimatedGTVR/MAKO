@@ -1,0 +1,12 @@
+script "Namespace Demo";
+use "mathlib.mko";
+
+main() {
+    print Math.add(10, 5);
+    print Math.sub(10, 5);
+    print Math.clamp(99, 0, 10);
+    print Math.factorial(6);
+
+    nums = [1, 2, 3, 4, 5];
+    print "sum: " + Math.sum(nums);
+}

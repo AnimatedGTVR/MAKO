@@ -1,0 +1,47 @@
+script "Break and Continue";
+
+main() {
+    // break — stop when we find 7
+    i = 1;
+    while i <= 20 {
+        if i == 7 {
+            print "Found 7, stopping.";
+            break;
+        }
+        print i;
+        i += 1;
+    }
+
+    // continue — skip even numbers
+    print "---";
+    i = 0;
+    while i < 10 {
+        i += 1;
+        if i % 2 == 0 { continue; }
+        print i;
+    }
+
+    // break in for loop — stop at first negative
+    print "---";
+    nums = [3, 7, 1, -4, 9, 2];
+    for n in nums {
+        if n < 0 {
+            print "Hit negative: " + n;
+            break;
+        }
+        print n;
+    }
+
+    // not keyword
+    print "---";
+    done = false;
+    if not done {
+        print "not done yet";
+    }
+
+    // printnl — no newline
+    printnl "one ";
+    printnl "two ";
+    printnl "three";
+    print "";
+}

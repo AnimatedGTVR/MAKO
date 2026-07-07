@@ -2,11 +2,13 @@ namespace Mako;
 
 class MakoError : Exception
 {
-    public int Line { get; }
+    public int    Line       { get; }
+    public string RawMessage { get; }
 
     public MakoError(string message, int line = 0)
         : base(line > 0 ? $"[line {line}] {message}" : message)
     {
-        Line = line;
+        Line       = line;
+        RawMessage = message;
     }
 }

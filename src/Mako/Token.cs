@@ -3,21 +3,25 @@ namespace Mako;
 enum TokenType
 {
     // Literals
-    String, Number, True, False,
+    String, TemplateString, Number, True, False, None,
 
     // Identifier (variable/function names)
     Identifier,
 
     // Keywords
     Script,
+    Namespace,
     Main,
-    Print,
+    Print, Printnl,
     Input,
-    If,
-    Else,
+    If, Else,
+    While, For, In,
+    Break, Continue,
+    Fn, Return,
     Run,
-    Using,
-    Use,
+    And, Or, Not,
+    Const,
+    Using, Use,
 
     // Operators
     Assign,   // =
@@ -25,6 +29,7 @@ enum TokenType
     Minus,    // -
     Star,     // *
     Slash,    // /
+    Percent,  // %
     EqEq,     // ==
     NotEq,    // !=
     Lt,       // <
@@ -32,13 +37,21 @@ enum TokenType
     LtEq,     // <=
     GtEq,     // >=
     Bang,     // !
+    PlusEq,   // +=
+    MinusEq,  // -=
+    StarEq,   // *=
+    SlashEq,  // /=
 
     // Punctuation
+    Dot,       // .
     LParen,    // (
     RParen,    // )
     LBrace,    // {
     RBrace,    // }
+    LBracket,  // [
+    RBracket,  // ]
     Semicolon, // ;
+    Comma,     // ,
 
     Eof,
 }

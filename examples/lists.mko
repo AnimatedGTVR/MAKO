@@ -1,0 +1,47 @@
+script "Lists";
+
+main() {
+    // Create a list
+    nums = [10, 20, 30, 40, 50];
+    print nums;
+    print "length: " + len(nums);
+    print "first: " + first(nums);
+    print "last: " + last(nums);
+
+    // Index access
+    print nums[0];
+    print nums[-1];   // last element
+
+    // Modify an element
+    nums[2] = 99;
+    print nums;
+
+    // Push / pop
+    push(nums, 60);
+    print nums;
+    popped = pop(nums);
+    print "popped: " + popped;
+
+    // for loop
+    print "---";
+    for n in nums {
+        print n;
+    }
+
+    // List of strings
+    print "---";
+    fruits = ["apple", "banana", "cherry"];
+    for fruit in fruits {
+        print upper(fruit);
+    }
+
+    // join
+    print join(fruits, ", ");
+
+    // has
+    print has(fruits, "banana");
+    print has(fruits, "mango");
+
+    // reverse
+    print reverse(nums);
+}

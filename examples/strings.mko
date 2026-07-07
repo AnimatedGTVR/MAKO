@@ -1,0 +1,27 @@
+script "String Builtins";
+
+main() {
+    s = "  Hello, MAKO World!  ";
+
+    print upper(s);
+    print lower(s);
+    print trim(s);
+    print len(trim(s));
+
+    print contains(s, "MAKO");
+    print contains(s, "Rust");
+
+    print replace(s, "MAKO", "beautiful MAKO");
+    print starts_with(trim(s), "Hello");
+    print ends_with(trim(s), "World!");
+
+    // split / join round-trip
+    csv = "one,two,three,four";
+    parts = split(csv, ",");
+    print parts;
+    print join(parts, " | ");
+
+    // building a sentence
+    words = ["The", "quick", "brown", "fox"];
+    print join(words, " ");
+}

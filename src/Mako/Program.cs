@@ -15,7 +15,7 @@ if (args.Length == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "
 
 if (args[0] == "version" || args[0] == "--version" || args[0] == "-v")
 {
-    Console.WriteLine("MAKO 0.1.0");
+    Console.WriteLine("MAKO 0.02");
     return 0;
 }
 
@@ -51,12 +51,27 @@ if (args[0] == "run")
     {
         var tokens     = new Lexer(source).Tokenize();
         var program    = new Parser(tokens).Parse();
-        new Interpreter().Execute(program);
+        var baseDir    = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
+        new Interpreter().Execute(program, baseDir);
         return 0;
     }
     catch (MakoError ex)
     {
-        Console.Error.WriteLine($"mako: error: {ex.Message}");
+        if (ex.Line > 0)
+        {
+            var lines = source.Split('\n');
+            if (ex.Line <= lines.Length)
+            {
+                var srcLine = lines[ex.Line - 1].TrimStart();
+                Console.Error.WriteLine($"\n  {srcLine}");
+                Console.Error.WriteLine($"  {new string('^', Math.Max(1, srcLine.Length))}");
+            }
+            Console.Error.WriteLine($"mako: error (line {ex.Line}): {ex.RawMessage}\n");
+        }
+        else
+        {
+            Console.Error.WriteLine($"mako: error: {ex.RawMessage}");
+        }
         return 1;
     }
     catch (Exception ex)
@@ -74,17 +89,32 @@ return 1;
 static void PrintHelp()
 {
     Console.WriteLine("""
-    MAKO 0.1.0 — a simple, sharp programming language
+    MAKO 0.02 — a simple, sharp programming language
 
     Usage:
       mako run <file.mko>   Run a MAKO script
       mako version          Show version
       mako help             Show this help
 
+    Language features:
+      Variables, arithmetic (+  -  *  /  %)
+      Compound assignment (+=  -=  *=  /=)
+      Strings, numbers, booleans, lists, none
+      if / else if / else
+      while  /  for item in list
+      break  /  continue
+      fn / return  (user-defined functions, recursive)
+      and / or / not  (short-circuit logical)
+      print  /  printnl  /  input  /  run
+      String: len  upper  lower  trim  contains
+              starts_with  ends_with  replace  split  join
+      List:   len  push  pop  first  last  reverse  has
+      Math:   abs  floor  ceil  sqrt  pow  max  min  round
+      Util:   type  to_num  to_str
+
     Example:
       mako run examples/hello.mko
 
     MAKO files use the .mko extension.
-    See https://github.com/AnimatedGTVR/MAKO for docs and examples.
     """);
 }
