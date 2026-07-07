@@ -30,15 +30,26 @@ class Interpreter
                 : Path.Combine(string.IsNullOrEmpty(baseDir) ? "." : baseDir, importPath);
 
             if (!File.Exists(fullPath))
-                throw new MakoError($"Cannot find module '{importPath}'");
+                throw new MakoError($"cannot find module '{importPath}'");
 
-            var src    = File.ReadAllText(fullPath);
-            var module = new Parser(new Lexer(src).Tokenize()).Parse();
-            var modNs  = module.Namespace
-                ?? throw new MakoError($"Module '{importPath}' must declare a namespace");
+            var src = File.ReadAllText(fullPath);
+            ProgramNode module;
+            try { module = new Parser(new Lexer(src).Tokenize()).Parse(); }
+            catch (MakoError e) when (e.SourcePath is null)
+            {
+                // Tag with the module path so the CLI shows a snippet from the
+                // module's source, not the importing file's.
+                throw new MakoError(e.RawMessage, e.Line, e.Col, e.Length)
+                      { SourcePath = fullPath };
+            }
+            var modNs = module.Namespace
+                ?? throw new MakoError($"module '{importPath}' must declare a namespace");
 
             foreach (var fn in module.Functions)
+            {
+                fn.Source = fullPath;
                 _funcs[$"{modNs}.{fn.Name}"] = fn;
+            }
         }
 
         foreach (var fn in program.Functions)
@@ -54,7 +65,25 @@ class Interpreter
 
     // ── Statements ────────────────────────────────────────────────────────────
 
+    /// Runs a statement, attaching the statement's source position to any
+    /// runtime error that doesn't already carry a more precise one.
     private void RunStatement(Statement stmt)
+    {
+        try { RunStatementCore(stmt); }
+        catch (MakoError e) when (e.Line == 0 && stmt.Line > 0)
+        {
+            int len = stmt switch
+            {
+                AssignStmt a       => a.Name.Length,
+                IndexAssignStmt ia => ia.Name.Length,
+                ForStmt            => 3,
+                _                  => 1,
+            };
+            throw new MakoError(e.RawMessage, stmt.Line, stmt.Col, len);
+        }
+    }
+
+    private void RunStatementCore(Statement stmt)
     {
         switch (stmt)
         {
@@ -81,7 +110,8 @@ class Interpreter
             case IndexAssignStmt ia:
                 var listTarget = GetVar(ia.Name);
                 if (listTarget is not List<object?> lst)
-                    throw new MakoError($"Cannot index into '{TypeName(listTarget)}'");
+                    throw new MakoError(
+                        $"cannot assign by index into {TypeName(listTarget)} — '{ia.Name}' must be a list");
                 lst[NormalizeIndex((int)ToNumber(Eval(ia.Index)), lst.Count)] = Eval(ia.Value);
                 break;
 
@@ -105,7 +135,9 @@ class Interpreter
             case ForStmt f:
                 var iterable = Eval(f.Iterable);
                 if (iterable is not List<object?> items)
-                    throw new MakoError($"'for' requires a list, got '{TypeName(iterable)}'");
+                    throw new MakoError($"'for' needs a list to loop over, got {TypeName(iterable)}"
+                        + (iterable is string ? " — to loop over characters, use split(text, \"\")" : "")
+                        + (iterable is double ? " — to loop over numbers, use range(n)" : ""));
                 try
                 {
                     foreach (var item in new List<object?>(items))
@@ -139,7 +171,27 @@ class Interpreter
 
     // ── Expressions ───────────────────────────────────────────────────────────
 
-    private object? Eval(Expr expr) => expr switch
+    /// Evaluates an expression, attaching the expression's source position to
+    /// any runtime error that doesn't already carry one. The innermost
+    /// positioned expression wins, so carets land on the exact name/operator.
+    private object? Eval(Expr expr)
+    {
+        try { return EvalCore(expr); }
+        catch (MakoError e) when (e.Line == 0 && expr.Line > 0)
+        {
+            int len = expr switch
+            {
+                IdentExpr i          => i.Name.Length,
+                CallExpr c           => c.Name.Length,
+                NamespacedCallExpr n => n.Ns.Length + 1 + n.Func.Length,
+                BinaryExpr b         => b.Op.Length,
+                _                    => 1,
+            };
+            throw new MakoError(e.RawMessage, expr.Line, expr.Col, len);
+        }
+    }
+
+    private object? EvalCore(Expr expr) => expr switch
     {
         StringLit s          => s.Value,
         NumberLit n          => n.Value,
@@ -160,10 +212,13 @@ class Interpreter
     private object? EvalIndex(IndexExpr ix)
     {
         var target = Eval(ix.Target);
-        var raw    = (int)ToNumber(Eval(ix.Index));
-        if (target is List<object?> list) return list[NormalizeIndex(raw, list.Count)];
-        if (target is string s)           return s[NormalizeIndex(raw, s.Length)].ToString();
-        throw new MakoError($"Cannot index into '{TypeName(target)}'");
+        var index  = Eval(ix.Index);
+        if (index is not double dIdx)
+            throw new MakoError($"list index must be a number, got {TypeName(index)} '{Short(index)}'");
+        var raw = (int)dIdx;
+        if (target is List<object?> list) return list[NormalizeIndex(raw, list.Count, "list")];
+        if (target is string s)           return s[NormalizeIndex(raw, s.Length, "string")].ToString();
+        throw new MakoError($"cannot index into {TypeName(target)} — only lists and strings can be indexed");
     }
 
     private object? EvalUnary(UnaryExpr u)
@@ -172,8 +227,9 @@ class Interpreter
         return u.Op switch
         {
             "!" => !Truthy(val),
-            "-" => val is double d ? -d : throw new MakoError($"Cannot negate '{Stringify(val)}'"),
-            _   => throw new MakoError($"Unknown unary operator '{u.Op}'"),
+            "-" => val is double d ? -d
+                   : throw new MakoError($"cannot negate {TypeName(val)} '{Short(val)}' — '-' needs a number"),
+            _   => throw new MakoError($"unknown unary operator '{u.Op}'"),
         };
     }
 
@@ -191,27 +247,40 @@ class Interpreter
 
         if (op is "+" or "-" or "*" or "/" or "%")
         {
-            double l = ToNumber(left), r = ToNumber(right);
+            double l, r;
+            try { l = ToNumber(left); r = ToNumber(right); }
+            catch (MakoError)
+            {
+                string hint = op == "+" && (left is List<object?> || right is List<object?>)
+                    ? " — to add an item to a list, use push(list, item)"
+                    : " — both sides must be numbers";
+                throw new MakoError($"cannot use '{op}' on {TypeName(left)} and {TypeName(right)}{hint}");
+            }
             return op switch
             {
                 "+" => l + r,
                 "-" => l - r,
                 "*" => l * r,
-                "/" => r == 0 ? throw new MakoError("Division by zero") : l / r,
-                "%" => r == 0 ? throw new MakoError("Modulo by zero")   : l % r,
-                _   => throw new MakoError($"Unknown operator '{op}'"),
+                "/" => r == 0 ? throw new MakoError("division by zero") : l / r,
+                "%" => r == 0 ? throw new MakoError("modulo by zero")   : l % r,
+                _   => throw new MakoError($"unknown operator '{op}'"),
             };
         }
 
         if (op == "==") return  ValuesEqual(left, right);
         if (op == "!=") return !ValuesEqual(left, right);
 
-        double lc = ToNumber(left), rc = ToNumber(right);
+        double lc, rc;
+        try { lc = ToNumber(left); rc = ToNumber(right); }
+        catch (MakoError)
+        {
+            throw new MakoError($"cannot compare {TypeName(left)} and {TypeName(right)} with '{op}'");
+        }
         return op switch
         {
             "<"  => lc < rc, ">"  => lc > rc,
             "<=" => lc <= rc, ">=" => lc >= rc,
-            _    => throw new MakoError($"Unknown operator '{op}'"),
+            _    => throw new MakoError($"unknown operator '{op}'"),
         };
     }
 
@@ -233,7 +302,12 @@ class Interpreter
             return builtinResult;
 
         if (!_funcs.TryGetValue(name, out var fn))
-            throw new MakoError($"Undefined function '{name}'");
+        {
+            var hint = Suggest.Closest(name, _funcs.Keys.Concat(BuiltinNames));
+            throw new MakoError(hint != null
+                ? $"function '{name}' wasn't found (did you mean '{hint}'?)"
+                : $"function '{name}' wasn't found (got null reference)");
+        }
 
         if (args.Count != fn.Params.Count)
             throw new MakoError($"'{name}' expects {fn.Params.Count} argument(s), got {args.Count}");
@@ -245,9 +319,25 @@ class Interpreter
         object? ret = null;
         try   { foreach (var s in fn.Body) RunStatement(s); }
         catch (ReturnSignal sig) { ret = sig.Value; }
+        catch (MakoError e) when (fn.Source != null && e.SourcePath is null)
+        {
+            // Error inside an imported function: its line numbers refer to the
+            // module file, so tag the error with that path for the CLI snippet.
+            throw new MakoError(e.RawMessage, e.Line, e.Col, e.Length)
+                  { SourcePath = fn.Source };
+        }
         finally { PopScope(); }
         return ret;
     }
+
+    private static readonly string[] BuiltinNames =
+    [
+        "type", "to_num", "to_str", "exit", "assert",
+        "abs", "floor", "ceil", "sqrt", "round", "pow", "max", "min", "range",
+        "len", "upper", "lower", "trim", "contains", "starts_with", "ends_with",
+        "replace", "split", "join",
+        "push", "pop", "first", "last", "reverse", "has",
+    ];
 
     private bool TryBuiltin(string name, List<object?> args, out object? result)
     {
@@ -256,7 +346,16 @@ class Interpreter
         {
             // ── Type / conversion ─────────────────────────────────────────────
             case "type":    RequireArity(name, args, 1); result = TypeName(args[0]); return true;
-            case "to_num":  RequireArity(name, args, 1); result = ToNumber(args[0]); return true;
+            case "to_num":
+                RequireArity(name, args, 1);
+                try { result = ToNumber(args[0]); }
+                catch (MakoError)
+                {
+                    throw new MakoError(
+                        $"to_num() can't convert {TypeName(args[0])} '{Short(args[0])}' to a number"
+                        + (args[0] is string ? " — the text isn't numeric" : ""));
+                }
+                return true;
             case "to_str":  RequireArity(name, args, 1); result = Stringify(args[0]); return true;
 
             // ── Program control ───────────────────────────────────────────────
@@ -275,15 +374,15 @@ class Interpreter
                 result = null; return true;
 
             // ── Math ──────────────────────────────────────────────────────────
-            case "abs":   RequireArity(name, args, 1); result = Math.Abs(ToNumber(args[0]));     return true;
-            case "floor": RequireArity(name, args, 1); result = Math.Floor(ToNumber(args[0]));   return true;
-            case "ceil":  RequireArity(name, args, 1); result = Math.Ceiling(ToNumber(args[0])); return true;
-            case "sqrt":  RequireArity(name, args, 1); result = Math.Sqrt(ToNumber(args[0]));    return true;
+            case "abs":   RequireArity(name, args, 1); result = Math.Abs(AsNum(name, args[0]));     return true;
+            case "floor": RequireArity(name, args, 1); result = Math.Floor(AsNum(name, args[0]));   return true;
+            case "ceil":  RequireArity(name, args, 1); result = Math.Ceiling(AsNum(name, args[0])); return true;
+            case "sqrt":  RequireArity(name, args, 1); result = Math.Sqrt(AsNum(name, args[0]));    return true;
             case "round": RequireArity(name, args, 1);
-                result = Math.Round(ToNumber(args[0]), MidpointRounding.AwayFromZero); return true;
-            case "pow":   RequireArity(name, args, 2); result = Math.Pow(ToNumber(args[0]), ToNumber(args[1])); return true;
-            case "max":   RequireArity(name, args, 2); result = Math.Max(ToNumber(args[0]), ToNumber(args[1])); return true;
-            case "min":   RequireArity(name, args, 2); result = Math.Min(ToNumber(args[0]), ToNumber(args[1])); return true;
+                result = Math.Round(AsNum(name, args[0]), MidpointRounding.AwayFromZero); return true;
+            case "pow":   RequireArity(name, args, 2); result = Math.Pow(AsNum(name, args[0]), AsNum(name, args[1])); return true;
+            case "max":   RequireArity(name, args, 2); result = Math.Max(AsNum(name, args[0]), AsNum(name, args[1])); return true;
+            case "min":   RequireArity(name, args, 2); result = Math.Min(AsNum(name, args[0]), AsNum(name, args[1])); return true;
 
             // ── Range ─────────────────────────────────────────────────────────
             case "range":
@@ -372,9 +471,19 @@ class Interpreter
     }
 
     private static string       AsStr(string fn, object? v) =>
-        v is string s ? s : throw new MakoError($"{fn}() expects a string, got '{TypeName(v)}'");
+        v is string s ? s : throw new MakoError($"{fn}() expects a string, got {TypeName(v)} '{Short(v)}'");
     private static List<object?> AsList(string fn, object? v) =>
-        v is List<object?> l ? l : throw new MakoError($"{fn}() expects a list, got '{TypeName(v)}'");
+        v is List<object?> l ? l : throw new MakoError($"{fn}() expects a list, got {TypeName(v)} '{Short(v)}'");
+    private static double AsNum(string fn, object? v)
+    {
+        try { return ToNumber(v); }
+        catch (MakoError)
+        {
+            throw new MakoError(v is null
+                ? $"{fn}() expects a number, got none"
+                : $"{fn}() expects a number, got {TypeName(v)} '{Short(v)}'");
+        }
+    }
 
     // ── Scope helpers ─────────────────────────────────────────────────────────
 
@@ -385,7 +494,14 @@ class Interpreter
     {
         for (int i = _scopes.Count - 1; i >= 0; i--)
             if (_scopes[i].Vars.TryGetValue(name, out var v)) return v;
-        throw new MakoError($"Variable '{name}' is not defined");
+
+        var candidates = _scopes.SelectMany(s => s.Vars.Keys)
+                                .Concat(_funcs.Keys)
+                                .Concat(BuiltinNames);
+        var hint = Suggest.Closest(name, candidates);
+        throw new MakoError(hint != null
+            ? $"type, function, or name '{name}' wasn't found (did you mean '{hint}'?)"
+            : $"type, function, or name '{name}' wasn't found (got null reference)");
     }
 
     private void SetVar(string name, object? value)
@@ -395,7 +511,7 @@ class Interpreter
             if (_scopes[i].Vars.ContainsKey(name))
             {
                 if (_scopes[i].Consts.Contains(name))
-                    throw new MakoError($"Cannot reassign const '{name}'");
+                    throw new MakoError($"cannot reassign const '{name}'");
                 _scopes[i].Vars[name] = value;
                 return;
             }
@@ -450,14 +566,27 @@ class Interpreter
                 System.Globalization.NumberStyles.Any,
                 System.Globalization.CultureInfo.InvariantCulture, out var n))
             return n;
-        throw new MakoError($"Expected a number, got '{Stringify(val)}'");
+        throw new MakoError(val is null
+            ? "expected a number, got none"
+            : $"expected a number, got {TypeName(val)} '{Short(val)}'");
     }
 
-    private static int NormalizeIndex(int i, int len)
+    private static int NormalizeIndex(int i, int len, string what = "list")
     {
-        if (i < 0) i = len + i;
-        if (i < 0 || i >= len) throw new MakoError($"Index {i} out of range (length {len})");
-        return i;
+        int adj = i < 0 ? len + i : i;
+        if (adj < 0 || adj >= len)
+            throw new MakoError(len == 0
+                ? $"index {i} is out of range — the {what} is empty"
+                : $"index {i} is out of range (valid: 0 to {len - 1}, or -1 to -{len})");
+        return adj;
+    }
+
+    /// Value preview for error messages, truncated so huge lists/strings
+    /// don't flood the output.
+    private static string Short(object? v)
+    {
+        var s = Stringify(v);
+        return s.Length > 24 ? s[..21] + "..." : s;
     }
 
     private static string TypeName(object? val) => val switch

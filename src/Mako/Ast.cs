@@ -2,7 +2,11 @@ namespace Mako;
 
 // ── Root ─────────────────────────────────────────────────────────────────────
 
-record FnDecl(string Name, List<string> Params, List<Statement> Body);
+record FnDecl(string Name, List<string> Params, List<Statement> Body)
+{
+    /// File the function was loaded from via 'use', or null for the main script.
+    public string? Source { get; set; }
+}
 
 record ProgramNode(
     string? ScriptName,
@@ -14,7 +18,12 @@ record ProgramNode(
 
 // ── Statements ────────────────────────────────────────────────────────────────
 
-abstract record Statement;
+abstract record Statement
+{
+    // Source position of the statement's first token (0 = unknown).
+    public int Line { get; set; }
+    public int Col  { get; set; }
+}
 
 /// print expr;
 record PrintStmt(Expr Value) : Statement;
@@ -57,7 +66,13 @@ record ExprStmt(Expr Value) : Statement;
 
 // ── Expressions ───────────────────────────────────────────────────────────────
 
-abstract record Expr;
+abstract record Expr
+{
+    // Source position of the expression's anchor token (0 = unknown):
+    // the name for identifiers/calls, the operator for binary/unary expressions.
+    public int Line { get; set; }
+    public int Col  { get; set; }
+}
 
 /// "hello world"
 record StringLit(string Value) : Expr;

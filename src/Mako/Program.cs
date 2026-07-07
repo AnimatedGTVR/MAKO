@@ -57,27 +57,7 @@ if (args[0] == "run")
     }
     catch (MakoError ex)
     {
-        if (ex.Line > 0)
-        {
-            var lines = source.Split('\n');
-            if (ex.Line <= lines.Length)
-            {
-                var srcLine = lines[ex.Line - 1].TrimStart().TrimEnd();
-                Console.Error.WriteLine($"\n  {srcLine}");
-
-                // Missing ';' → ^ at the end showing where it belongs.
-                // Other errors → ^^^ underline the whole line.
-                var pointer = ex.RawMessage.StartsWith("missing ';'")
-                    ? new string(' ', srcLine.Length) + "^"
-                    : new string('^', Math.Max(1, srcLine.Length));
-                Console.Error.WriteLine($"  {pointer}");
-            }
-            Console.Error.WriteLine($"mako: error (line {ex.Line}): {ex.RawMessage}\n");
-        }
-        else
-        {
-            Console.Error.WriteLine($"mako: error: {ex.RawMessage}");
-        }
+        ReportError(ex, source);
         return 1;
     }
     catch (Exception ex)
@@ -91,6 +71,63 @@ Console.Error.WriteLine($"mako: unknown command '{args[0]}'. Run 'mako help'.");
 return 1;
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Renders an error as:
+//
+//     print greet("World")
+//                         ^
+//   mako: error (line 21): missing ';' (got start of 'print' statement)
+//
+// The caret lands on the error's column (or underlines the whole line when the
+// column is unknown). Errors from imported modules show the module's source.
+static void ReportError(MakoError ex, string mainSource)
+{
+    string? source = mainSource;
+    string  where  = $"line {ex.Line}";
+
+    if (ex.SourcePath != null)
+    {
+        where = $"line {ex.Line} in {Path.GetFileName(ex.SourcePath)}";
+        try { source = File.ReadAllText(ex.SourcePath); }
+        catch { source = null; }
+    }
+
+    if (ex.Line <= 0)
+    {
+        Console.Error.WriteLine($"mako: error: {ex.RawMessage}");
+        return;
+    }
+
+    var lines = source?.Split('\n');
+    if (lines != null && ex.Line <= lines.Length)
+    {
+        // Tabs become single spaces so caret columns still line up.
+        var raw     = lines[ex.Line - 1].TrimEnd('\r', ' ').Replace('\t', ' ');
+        var srcLine = raw.TrimStart();
+        int indent  = raw.Length - srcLine.Length;
+
+        Console.Error.WriteLine($"\n  {srcLine}");
+
+        string pointer;
+        if (ex.Col > 0)
+        {
+            int caretCol = Math.Clamp(ex.Col - indent, 1, srcLine.Length + 1);
+            int caretLen = Math.Clamp(ex.Length, 1, srcLine.Length + 2 - caretCol);
+            pointer = new string(' ', caretCol - 1) + new string('^', caretLen);
+        }
+        else
+        {
+            pointer = new string('^', Math.Max(1, srcLine.Length));
+        }
+        Console.Error.WriteLine($"  {pointer}");
+    }
+    else
+    {
+        Console.Error.WriteLine();
+    }
+
+    Console.Error.WriteLine($"mako: error ({where}): {ex.RawMessage}\n");
+}
 
 static void PrintHelp()
 {

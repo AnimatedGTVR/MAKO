@@ -56,7 +56,9 @@ enum TokenType
     Eof,
 }
 
-record Token(TokenType Type, string Value, int Line)
+/// Col/EndCol are 1-based. EndLine/EndCol point just past the token's last
+/// character — exactly where a missing ';' caret belongs.
+record Token(TokenType Type, string Value, int Line, int Col = 0, int EndLine = 0, int EndCol = 0)
 {
-    public override string ToString() => $"[{Type} '{Value}' L{Line}]";
+    public override string ToString() => $"[{Type} '{Value}' L{Line}:C{Col}]";
 }

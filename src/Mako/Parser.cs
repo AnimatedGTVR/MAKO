@@ -38,26 +38,27 @@ class Parser
         var imports = new List<string>();
         var fns     = new List<FnDecl>();
         var body    = new List<Statement>();
+        Token? mainTok = null;
 
         if (Check(TokenType.Script))
         {
             Advance();
-            scriptName = Expect(TokenType.String, "Expected script name string").Value;
-            Expect(TokenType.Semicolon, "Expected ';' after script name");
+            scriptName = Expect(TokenType.String, "expected a quoted script name after 'script'").Value;
+            Expect(TokenType.Semicolon, "script name");
         }
 
         if (Check(TokenType.Namespace))
         {
             Advance();
-            ns = Expect(TokenType.Identifier, "Expected namespace name").Value;
-            Expect(TokenType.Semicolon, "Expected ';' after namespace name");
+            ns = Expect(TokenType.Identifier, "expected a namespace name after 'namespace'").Value;
+            Expect(TokenType.Semicolon, "namespace name");
         }
 
         while (Check(TokenType.Use))
         {
             Advance();
-            imports.Add(Expect(TokenType.String, "Expected file path string after 'use'").Value);
-            Expect(TokenType.Semicolon, "Expected ';' after use path");
+            imports.Add(Expect(TokenType.String, "expected a quoted file path after 'use'").Value);
+            Expect(TokenType.Semicolon, "use path");
         }
 
         while (!Check(TokenType.Eof))
@@ -66,15 +67,35 @@ class Parser
                 fns.Add(ParseFnDecl());
             else if (Check(TokenType.Main))
             {
+                if (mainTok is { } first)
+                    throw new MakoError(
+                        $"duplicate 'main' block (the first one is on line {first.Line})",
+                        Current().Line, Current().Col, 4);
+                mainTok = Current();
                 Advance();
-                Expect(TokenType.LParen, "Expected '(' after 'main'");
-                Expect(TokenType.RParen, "Expected ')' after '('");
+                var open = Expect(TokenType.LParen, "missing '(' after 'main'");
+                ExpectClosing(TokenType.RParen, ")", open);
                 body = ParseBlock();
             }
             else break;
         }
 
-        Expect(TokenType.Eof, "Expected end of file");
+        if (!Check(TokenType.Eof))
+        {
+            var tok = Current();
+            string hint = "";
+            if (tok.Type == TokenType.Identifier)
+            {
+                var s = tok.Value is "func" or "function" or "def"
+                    ? "fn"
+                    : Suggest.Closest(tok.Value, ["fn", "main", "use", "script", "namespace"]);
+                if (s != null) hint = $" (did you mean '{s}'?)";
+            }
+            throw new MakoError(
+                $"unexpected {DescribeToken(tok)} at top level — only 'fn' declarations and 'main()' are allowed{hint}",
+                tok.Line, tok.Col, Math.Max(1, tok.Value.Length));
+        }
+
         return new ProgramNode(scriptName, ns, imports, fns, body);
     }
 
@@ -83,15 +104,22 @@ class Parser
     private FnDecl ParseFnDecl()
     {
         Advance(); // "fn"
-        var name = Expect(TokenType.Identifier, "Expected function name").Value;
-        Expect(TokenType.LParen, "Expected '(' after function name");
+        var name = Expect(TokenType.Identifier, "expected a function name after 'fn'").Value;
+        var open = Expect(TokenType.LParen, $"missing '(' after function name '{name}'");
         var parms = new List<string>();
         while (!Check(TokenType.RParen) && !Check(TokenType.Eof))
         {
-            parms.Add(Expect(TokenType.Identifier, "Expected parameter name").Value);
-            if (Check(TokenType.Comma)) Advance();
+            parms.Add(Expect(TokenType.Identifier, "expected a parameter name").Value);
+            if (Check(TokenType.Comma)) { Advance(); continue; }
+            if (!Check(TokenType.RParen) && !Check(TokenType.Eof))
+            {
+                var prev = Previous();
+                throw new MakoError(
+                    $"missing ',' or ')' between parameters (got {DescribeToken(Current())})",
+                    prev.EndLine, prev.EndCol);
+            }
         }
-        Expect(TokenType.RParen, "Expected ')' after parameters");
+        ExpectClosing(TokenType.RParen, ")", open);
         return new FnDecl(name, parms, ParseBlock());
     }
 
@@ -99,47 +127,65 @@ class Parser
 
     private List<Statement> ParseBlock()
     {
-        Expect(TokenType.LBrace, "Expected '{'");
+        var open = Expect(TokenType.LBrace, "block");
         var stmts = new List<Statement>();
         while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             stmts.Add(ParseStatement());
-        Expect(TokenType.RBrace, "Expected '}'");
+        if (!Check(TokenType.RBrace))
+        {
+            var prev = Previous();
+            throw new MakoError(
+                $"missing '}}' to close the block opened on line {open.Line} (got {DescribeToken(Current())})",
+                prev.EndLine, prev.EndCol);
+        }
+        Advance(); // }
         return stmts;
     }
 
-    private Statement ParseStatement() => Current().Type switch
+    private Statement ParseStatement()
     {
-        TokenType.Print      => ParsePrint(),
-        TokenType.Printnl    => ParsePrintnl(),
-        TokenType.Const      => ParseConst(),
-        TokenType.If         => ParseIf(),
-        TokenType.While      => ParseWhile(),
-        TokenType.For        => ParseFor(),
-        TokenType.Break      => ParseBreak(),
-        TokenType.Continue   => ParseContinue(),
-        TokenType.Return     => ParseReturn(),
-        TokenType.Run        => ParseRun(),
-        TokenType.Identifier => ParseAssignOrCall(),
-        _ => throw new MakoError(
-            $"Unexpected token '{Current().Value}' — not a valid statement start",
-            Current().Line),
-    };
+        var tok = Current();
+        Statement s = tok.Type switch
+        {
+            TokenType.Print      => ParsePrint(),
+            TokenType.Printnl    => ParsePrintnl(),
+            TokenType.Const      => ParseConst(),
+            TokenType.If         => ParseIf(),
+            TokenType.While      => ParseWhile(),
+            TokenType.For        => ParseFor(),
+            TokenType.Break      => ParseBreak(),
+            TokenType.Continue   => ParseContinue(),
+            TokenType.Return     => ParseReturn(),
+            TokenType.Run        => ParseRun(),
+            TokenType.Identifier => ParseAssignOrCall(),
+            TokenType.Else => throw new MakoError(
+                "found 'else' without a matching 'if'", tok.Line, tok.Col, 4),
+            TokenType.Fn => throw new MakoError(
+                "functions must be declared at top level, outside 'main' and other functions",
+                tok.Line, tok.Col, 2),
+            _ => throw new MakoError(
+                $"unexpected {DescribeToken(tok)} — not a valid statement start",
+                tok.Line, tok.Col, Math.Max(1, tok.Value.Length)),
+        };
+        if (s.Line == 0) { s.Line = tok.Line; s.Col = tok.Col; }
+        return s;
+    }
 
     private PrintStmt ParsePrint()
     {
         Advance();
         var val = ParseExpr();
-        Expect(TokenType.Semicolon, "Expected ';' after print");
+        Expect(TokenType.Semicolon, "print");
         return new PrintStmt(val);
     }
 
     private ConstStmt ParseConst()
     {
         Advance(); // "const"
-        var name = Expect(TokenType.Identifier, "Expected name after 'const'").Value;
-        Expect(TokenType.Assign, $"Expected '=' after const '{name}'");
+        var name = Expect(TokenType.Identifier, "expected a name after 'const'").Value;
+        Expect(TokenType.Assign, $"missing '=' after const '{name}'");
         var val = ParseExpr();
-        Expect(TokenType.Semicolon, $"Expected ';' after const '{name}'");
+        Expect(TokenType.Semicolon, $"const '{name}'");
         return new ConstStmt(name, val);
     }
 
@@ -147,41 +193,42 @@ class Parser
     {
         Advance();
         var val = ParseExpr();
-        Expect(TokenType.Semicolon, "Expected ';' after printnl");
+        Expect(TokenType.Semicolon, "printnl");
         return new PrintnlStmt(val);
     }
 
     private Statement ParseAssignOrCall()
     {
-        var name = Advance().Value; // identifier
+        var nameTok = Advance(); // identifier
+        var name    = nameTok.Value;
 
         // Namespaced call: Ns.func(args);
         if (Check(TokenType.Dot))
         {
             Advance(); // .
-            var fnName = Expect(TokenType.Identifier, $"Expected function name after '{name}.'").Value;
-            var call = ParseNamespacedCallTail(name, fnName);
-            Expect(TokenType.Semicolon, "Expected ';' after function call");
+            var fnName = Expect(TokenType.Identifier, $"expected a function name after '{name}.'").Value;
+            var call = ParseNamespacedCallTail(nameTok, fnName);
+            Expect(TokenType.Semicolon, "function call");
             return new ExprStmt(call);
         }
 
         // Bare function call: name(args);
         if (Check(TokenType.LParen))
         {
-            var call = ParseCallTail(name);
-            Expect(TokenType.Semicolon, "Expected ';' after function call");
+            var call = ParseCallTail(nameTok);
+            Expect(TokenType.Semicolon, "function call");
             return new ExprStmt(call);
         }
 
         // Index assignment: name[idx] = expr;
         if (Check(TokenType.LBracket))
         {
-            Advance(); // [
+            var openBr = Advance(); // [
             var idx = ParseExpr();
-            Expect(TokenType.RBracket, "Expected ']'");
-            Expect(TokenType.Assign, "Expected '=' after index");
+            ExpectClosing(TokenType.RBracket, "]", openBr);
+            Expect(TokenType.Assign, "missing '=' after index");
             var rhs = ParseExpr();
-            Expect(TokenType.Semicolon, "Expected ';' after index assignment");
+            Expect(TokenType.Semicolon, "index assignment");
             return new IndexAssignStmt(name, idx, rhs);
         }
 
@@ -193,20 +240,50 @@ class Parser
             TokenType.MinusEq => "-",
             TokenType.StarEq  => "*",
             TokenType.SlashEq => "/",
-            _ => throw new MakoError(
-                $"Expected '=' or assignment operator after '{name}' (got '{Current().Value}')",
-                Current().Line),
+            _ => throw UnknownAfterName(nameTok),
         };
         Advance();
         var val = ParseExpr();
         if (compoundOp != null)
-            val = new BinaryExpr(new IdentExpr(name), compoundOp, val);
-        Expect(TokenType.Semicolon, $"Expected ';' after assignment to '{name}'");
+            val = new BinaryExpr(new IdentExpr(name) { Line = nameTok.Line, Col = nameTok.Col },
+                                 compoundOp, val)
+                  { Line = nameTok.Line, Col = nameTok.Col };
+        Expect(TokenType.Semicolon, $"assignment to '{name}'");
         return new AssignStmt(name, val);
+    }
+
+    /// Statement began with an identifier but what follows makes no sense.
+    /// Most often a typo'd keyword ("whle", "prnt") — try to say so.
+    private MakoError UnknownAfterName(Token nameTok)
+    {
+        var name = nameTok.Value;
+
+        if (name is "let" or "var")
+        {
+            var varName = Check(TokenType.Identifier) ? Current().Value : "x";
+            return new MakoError(
+                $"MAKO has no '{name}' keyword — assign directly, e.g. '{varName} = ...;'",
+                nameTok.Line, nameTok.Col, name.Length);
+        }
+
+        string? hint = name switch
+        {
+            "func" or "function" or "def" => "fn",
+            "elif" or "elsif"             => "else if",
+            _ => Suggest.Closest(name, Lexer.Keywords.Keys),
+        };
+        if (hint != null)
+            return new MakoError($"unknown statement '{name}' — did you mean '{hint}'?",
+                nameTok.Line, nameTok.Col, name.Length);
+
+        return new MakoError(
+            $"expected '=', '(', '[' or an assignment operator after '{name}' (got {DescribeToken(Current())})",
+            Current().Line, Current().Col, Math.Max(1, Current().Value.Length));
     }
 
     private IfStmt ParseIf()
     {
+        var ifTok = Current();
         Advance(); // "if"
         var cond = ParseExpr();
         var then = ParseBlock();
@@ -218,7 +295,7 @@ class Parser
                 ? new List<Statement> { ParseIf() }
                 : ParseBlock();
         }
-        return new IfStmt(cond, then, els);
+        return new IfStmt(cond, then, els) { Line = ifTok.Line, Col = ifTok.Col };
     }
 
     private WhileStmt ParseWhile()
@@ -231,8 +308,8 @@ class Parser
     private ForStmt ParseFor()
     {
         Advance(); // "for"
-        var varName = Expect(TokenType.Identifier, "Expected variable name after 'for'").Value;
-        Expect(TokenType.In, "Expected 'in' after variable name");
+        var varName = Expect(TokenType.Identifier, "expected a loop variable name after 'for'").Value;
+        Expect(TokenType.In, $"expected 'in' after 'for {varName}'");
         var iterable = ParseExpr();
         return new ForStmt(varName, iterable, ParseBlock());
     }
@@ -240,14 +317,14 @@ class Parser
     private BreakStmt ParseBreak()
     {
         Advance();
-        Expect(TokenType.Semicolon, "Expected ';' after break");
+        Expect(TokenType.Semicolon, "break");
         return new BreakStmt();
     }
 
     private ContinueStmt ParseContinue()
     {
         Advance();
-        Expect(TokenType.Semicolon, "Expected ';' after continue");
+        Expect(TokenType.Semicolon, "continue");
         return new ContinueStmt();
     }
 
@@ -257,7 +334,7 @@ class Parser
         Expr? val = null;
         if (!Check(TokenType.Semicolon))
             val = ParseExpr();
-        Expect(TokenType.Semicolon, "Expected ';' after return");
+        Expect(TokenType.Semicolon, "return");
         return new ReturnStmt(val);
     }
 
@@ -265,7 +342,7 @@ class Parser
     {
         Advance();
         var cmd = ParseExpr();
-        Expect(TokenType.Semicolon, "Expected ';' after run");
+        Expect(TokenType.Semicolon, "run");
         return new RunStmt(cmd);
     }
 
@@ -278,8 +355,9 @@ class Parser
         var left = ParseComparison();
         while (Current().Type is TokenType.And or TokenType.Or)
         {
-            var op = Advance().Value;
-            left = new LogicalExpr(left, op, ParseComparison());
+            var op = Advance();
+            left = new LogicalExpr(left, op.Value, ParseComparison())
+                   { Line = op.Line, Col = op.Col };
         }
         return left;
     }
@@ -290,8 +368,9 @@ class Parser
         while (Current().Type is TokenType.EqEq or TokenType.NotEq
                or TokenType.Lt or TokenType.Gt or TokenType.LtEq or TokenType.GtEq)
         {
-            var op = Advance().Value;
-            left = new BinaryExpr(left, op, ParseAddition());
+            var op = Advance();
+            left = new BinaryExpr(left, op.Value, ParseAddition())
+                   { Line = op.Line, Col = op.Col };
         }
         return left;
     }
@@ -301,8 +380,9 @@ class Parser
         var left = ParseMultiply();
         while (Current().Type is TokenType.Plus or TokenType.Minus)
         {
-            var op = Advance().Value;
-            left = new BinaryExpr(left, op, ParseMultiply());
+            var op = Advance();
+            left = new BinaryExpr(left, op.Value, ParseMultiply())
+                   { Line = op.Line, Col = op.Col };
         }
         return left;
     }
@@ -312,8 +392,9 @@ class Parser
         var left = ParseUnary();
         while (Current().Type is TokenType.Star or TokenType.Slash or TokenType.Percent)
         {
-            var op = Advance().Value;
-            left = new BinaryExpr(left, op, ParseUnary());
+            var op = Advance();
+            left = new BinaryExpr(left, op.Value, ParseUnary())
+                   { Line = op.Line, Col = op.Col };
         }
         return left;
     }
@@ -322,13 +403,13 @@ class Parser
     {
         if (Check(TokenType.Bang) || Check(TokenType.Not))
         {
-            Advance();
-            return new UnaryExpr("!", ParseUnary());
+            var op = Advance();
+            return new UnaryExpr("!", ParseUnary()) { Line = op.Line, Col = op.Col };
         }
         if (Check(TokenType.Minus))
         {
-            Advance();
-            return new UnaryExpr("-", ParseUnary());
+            var op = Advance();
+            return new UnaryExpr("-", ParseUnary()) { Line = op.Line, Col = op.Col };
         }
         return ParsePostfix();
     }
@@ -339,10 +420,10 @@ class Parser
         var expr = ParsePrimary();
         while (Check(TokenType.LBracket))
         {
-            Advance(); // [
+            var openBr = Advance(); // [
             var idx = ParseExpr();
-            Expect(TokenType.RBracket, "Expected ']'");
-            expr = new IndexExpr(expr, idx);
+            ExpectClosing(TokenType.RBracket, "]", openBr);
+            expr = new IndexExpr(expr, idx) { Line = openBr.Line, Col = openBr.Col };
         }
         return expr;
     }
@@ -352,7 +433,7 @@ class Parser
         var tok = Current();
 
         if (Check(TokenType.String))         { Advance(); return new StringLit(tok.Value); }
-        if (Check(TokenType.TemplateString)) { Advance(); return ParseTemplateString(tok.Value, tok.Line); }
+        if (Check(TokenType.TemplateString)) { Advance(); return ParseTemplateString(tok.Value, tok.Line, tok.Col); }
         if (Check(TokenType.Number))   { Advance(); return new NumberLit(double.Parse(tok.Value, System.Globalization.CultureInfo.InvariantCulture)); }
         if (Check(TokenType.True))     { Advance(); return new BoolLit(true); }
         if (Check(TokenType.False))    { Advance(); return new BoolLit(false); }
@@ -361,21 +442,31 @@ class Parser
         // List literal: [expr, expr, ...]
         if (Check(TokenType.LBracket))
         {
-            Advance(); // [
+            var openBr = Advance(); // [
             var items = new List<Expr>();
             while (!Check(TokenType.RBracket) && !Check(TokenType.Eof))
             {
                 items.Add(ParseExpr());
-                if (Check(TokenType.Comma)) Advance();
+                if (Check(TokenType.Comma)) { Advance(); continue; }
+                if (!Check(TokenType.RBracket) && !Check(TokenType.Eof))
+                {
+                    var prev = Previous();
+                    throw new MakoError(
+                        $"missing ',' or ']' between list items (got {DescribeToken(Current())})",
+                        prev.EndLine, prev.EndCol);
+                }
             }
-            Expect(TokenType.RBracket, "Expected ']'");
+            ExpectClosing(TokenType.RBracket, "]", openBr);
             return new ListLit(items);
         }
 
         if (Check(TokenType.Input))
         {
             Advance();
-            return new InputExpr(ParsePrimary());
+            if (Check(TokenType.Semicolon))
+                throw new MakoError("'input' needs a prompt, e.g. input \"name: \"",
+                    tok.Line, tok.Col, 5);
+            return new InputExpr(ParsePrimary()) { Line = tok.Line, Col = tok.Col };
         }
 
         if (Check(TokenType.Identifier))
@@ -385,48 +476,57 @@ class Parser
             if (Check(TokenType.Dot))
             {
                 Advance(); // .
-                var fnName = Expect(TokenType.Identifier, $"Expected function name after '{tok.Value}.'").Value;
-                return ParseNamespacedCallTail(tok.Value, fnName);
+                var fnName = Expect(TokenType.Identifier, $"expected a function name after '{tok.Value}.'").Value;
+                return ParseNamespacedCallTail(tok, fnName);
             }
             if (Check(TokenType.LParen))
-                return ParseCallTail(tok.Value);
-            return new IdentExpr(tok.Value);
+                return ParseCallTail(tok);
+            return new IdentExpr(tok.Value) { Line = tok.Line, Col = tok.Col };
         }
 
         if (Check(TokenType.LParen))
         {
-            Advance();
+            var open = Advance();
             var inner = ParseExpr();
-            Expect(TokenType.RParen, "Expected ')'");
+            ExpectClosing(TokenType.RParen, ")", open);
             return inner;
         }
 
-        throw new MakoError($"Unexpected token '{tok.Value}' in expression", tok.Line);
+        var eqHint = tok.Type == TokenType.Assign ? " — did you mean '=='?" : "";
+        throw new MakoError($"unexpected {DescribeToken(tok)} in expression{eqHint}",
+            tok.Line, tok.Col, Math.Max(1, tok.Value.Length));
     }
 
-    private CallExpr ParseCallTail(string name)
+    private CallExpr ParseCallTail(Token nameTok)
     {
-        Advance(); // (
-        var args = ParseArgList();
-        return new CallExpr(name, args);
+        var open = Advance(); // (
+        var args = ParseArgList(open);
+        return new CallExpr(nameTok.Value, args) { Line = nameTok.Line, Col = nameTok.Col };
     }
 
-    private NamespacedCallExpr ParseNamespacedCallTail(string ns, string fn)
+    private NamespacedCallExpr ParseNamespacedCallTail(Token nsTok, string fn)
     {
-        Expect(TokenType.LParen, $"Expected '(' after '{ns}.{fn}'");
-        var args = ParseArgList();
-        return new NamespacedCallExpr(ns, fn, args);
+        var open = Expect(TokenType.LParen, $"missing '(' after '{nsTok.Value}.{fn}'");
+        var args = ParseArgList(open);
+        return new NamespacedCallExpr(nsTok.Value, fn, args) { Line = nsTok.Line, Col = nsTok.Col };
     }
 
-    private List<Expr> ParseArgList()
+    private List<Expr> ParseArgList(Token open)
     {
         var args = new List<Expr>();
         while (!Check(TokenType.RParen) && !Check(TokenType.Eof))
         {
             args.Add(ParseExpr());
-            if (Check(TokenType.Comma)) Advance();
+            if (Check(TokenType.Comma)) { Advance(); continue; }
+            if (!Check(TokenType.RParen) && !Check(TokenType.Eof))
+            {
+                var prev = Previous();
+                throw new MakoError(
+                    $"missing ',' or ')' between arguments (got {DescribeToken(Current())})",
+                    prev.EndLine, prev.EndCol);
+            }
         }
-        Expect(TokenType.RParen, "Expected ')' after arguments");
+        ExpectClosing(TokenType.RParen, ")", open);
         return args;
     }
 
@@ -436,12 +536,14 @@ class Parser
     public Expr ParseExprPublic()
     {
         var e = ParseExpr();
-        Expect(TokenType.Eof, "Expected end of interpolated expression");
+        Expect(TokenType.Eof, "unexpected content after expression in string interpolation");
         return e;
     }
 
     // Converts "Hello, {name}! You are {age} years old." into a chain of + expressions.
-    private Expr ParseTemplateString(string raw, int line)
+    // `raw` is the string's source text verbatim (between the quotes), so escape
+    // sequences and {{ }} are handled here and positions map exactly to the file.
+    private Expr ParseTemplateString(string raw, int line, int col)
     {
         var parts = new List<Expr>();
         int i = 0;
@@ -450,6 +552,17 @@ class Parser
         while (i < raw.Length)
         {
             char c = raw[i];
+
+            // {{ / }} → literal brace (escape)
+            if (c is '{' or '}' && i + 1 < raw.Length && raw[i + 1] == c)
+            {
+                sb.Append(c); i += 2; continue;
+            }
+            // \n, \t, ...
+            if (c == '\\' && i + 1 < raw.Length)
+            {
+                sb.Append(Lexer.Unescape(raw[i + 1])); i += 2; continue;
+            }
 
             if (c == '{')
             {
@@ -465,13 +578,24 @@ class Parser
                     else if (raw[i] == '}') depth--;
                     if (depth > 0) i++;
                 }
-                if (depth != 0) throw new MakoError("Unterminated '{' in string interpolation", line);
+
+                // Position of the expression inside the original file, so errors
+                // in "{expr}" point at the real source, not the substring.
+                int nlBefore = 0, lastNl = -1;
+                for (int k = 0; k < start; k++)
+                    if (raw[k] == '\n') { nlBefore++; lastNl = k; }
+                int exprLine = line + nlBefore;
+                int exprCol  = nlBefore == 0 ? col + 1 + start : start - lastNl;
+
+                if (depth != 0)
+                    throw new MakoError("missing '}' to close interpolation in string",
+                        exprLine, Math.Max(1, exprCol - 1));
 
                 var exprSrc = raw[start..i];
-                var subTokens = new Lexer(exprSrc).Tokenize();
+                var subTokens = new Lexer(exprSrc, exprLine, exprCol).Tokenize();
                 var subExpr   = new Parser(subTokens).ParseExprPublic();
                 // Wrap in to_str() so any type prints cleanly
-                parts.Add(new CallExpr("to_str", [subExpr]));
+                parts.Add(new CallExpr("to_str", [subExpr]) { Line = exprLine, Col = exprCol });
                 i++; // skip closing }
             }
             else
@@ -487,7 +611,7 @@ class Parser
 
         Expr result = parts[0];
         for (int j = 1; j < parts.Count; j++)
-            result = new BinaryExpr(result, "+", parts[j]);
+            result = new BinaryExpr(result, "+", parts[j]) { Line = line, Col = col };
         return result;
     }
 
@@ -503,23 +627,40 @@ class Parser
         return t;
     }
 
+    /// For ';' and '{' the caret goes where the symbol belongs — just past the
+    /// previous token — and `message` names the construct being parsed.
+    /// For everything else the caret goes under the surprising token and
+    /// `message` is the full "expected ..." text.
     private Token Expect(TokenType type, string message)
     {
-        if (!Check(type))
+        if (Check(type)) return Advance();
+
+        var got    = DescribeToken(Current());
+        var eqHint = Current().Type == TokenType.Assign ? " — did you mean '=='?" : "";
+        var prev   = Previous();
+
+        throw type switch
         {
-            // For a missing ';', blame the line that should have had it,
-            // not the next token that surprised us.
-            int errLine = (type == TokenType.Semicolon && _pos > 0)
-                ? Previous().Line
-                : Current().Line;
+            TokenType.Semicolon => new MakoError(
+                $"missing ';' (got {got}){eqHint}", prev.EndLine, prev.EndCol),
+            TokenType.LBrace => new MakoError(
+                $"missing '{{' (got {got}){eqHint}", prev.EndLine, prev.EndCol),
+            _ => new MakoError(
+                $"{message} (got {got})",
+                Current().Line, Current().Col, Math.Max(1, Current().Value.Length)),
+        };
+    }
 
-            string errMsg = type == TokenType.Semicolon
-                ? $"missing ';' (got {DescribeToken(Current())})"
-                : $"{message} (got '{Current().Value}')";
-
-            throw new MakoError(errMsg, errLine);
-        }
-        return Advance();
+    /// Closing delimiter with a pointer back to the opener when they're on
+    /// different lines.
+    private Token ExpectClosing(TokenType type, string symbol, Token open)
+    {
+        if (Check(type)) return Advance();
+        var prev = Previous();
+        var note = Current().Line != open.Line ? $" to match '{open.Value}' on line {open.Line}" : "";
+        throw new MakoError(
+            $"missing '{symbol}'{note} (got {DescribeToken(Current())})",
+            prev.EndLine, prev.EndCol);
     }
 
     private static string DescribeToken(Token tok) => tok.Type switch
@@ -530,6 +671,8 @@ class Parser
             => $"start of '{tok.Value}' statement",
         TokenType.RBrace => "end of block '}'",
         TokenType.Eof    => "end of file",
+        TokenType.String or TokenType.TemplateString
+            => $"string \"{(tok.Value.Length > 20 ? tok.Value[..17] + "..." : tok.Value)}\"",
         _                => $"'{tok.Value}'",
     };
 

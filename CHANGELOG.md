@@ -4,6 +4,55 @@ All notable changes to MAKO are recorded here.
 
 ---
 
+## [Unreleased]
+
+### Error reporting overhaul
+
+**Precise carets.** The lexer now tracks columns, and every token records where
+it starts and ends. Errors point at the exact spot — a missing `;` caret sits
+right where the semicolon belongs, and name errors underline the whole name:
+
+```
+  if value < lo { return loo; }
+                         ^^^
+mako: error (line 4): type, function, or name 'loo' wasn't found (did you mean 'lo'?)
+```
+
+**"Did you mean ...?" suggestions** (edit-distance based) for:
+
+- misspelled variables/functions at runtime (`loo` → `lo`, `gret()` → `greet`)
+- misspelled statement keywords (`whle` → `while`, `func`/`def` → `fn`, `elif` → `else if`)
+- `=` where `==` was meant (`if x = 5 {`)
+- `&`/`|` → `and`/`or`, `'...'` → use double quotes
+- `let x = 5;` / `var x = 5;` → "assign directly: `x = 5;`"
+
+**New errors that used to be silent, confusing, or crashes:**
+
+- unterminated string → `missing closing '"'` pointing at the end of the line it
+  opened on — and when the stray quote sits right after a word (`script Functions";`),
+  it reports `missing opening '"' before 'Functions'` with the caret before the word
+- unterminated `/* ... */` comment
+- invalid numbers (`3.14.15`) and names starting with a digit (`12abc`)
+  (previously an internal crash / silent mis-lex)
+- missing `,` between arguments, parameters, or list items
+  (previously `f(1 2)` silently parsed as `f(1, 2)`)
+- missing `}` / `)` / `]` now name the line the block or paren was opened on
+- `else` without `if`, `fn` inside a block, statements at top level,
+  duplicate `main()` — each with a specific message
+- runtime type errors carry positions and plain-English explanations:
+  `to_num("abc")`, `"abc" - 5`, `sqrt("nine")`, `for i in 5` (suggests `range(n)`),
+  index out of range (shows the valid range), division by zero, const reassignment
+
+**Module-aware errors.** Errors inside a file imported with `use` now show that
+file's source line and are labelled `line N in module.mko` (previously the
+snippet came from the wrong file).
+
+**Bug fix:** `{{` / `}}` literal-brace escapes were mangled when the string also
+contained a real `{expr}` interpolation; template strings are now parsed from
+verbatim source, which also makes carets inside interpolations land exactly.
+
+---
+
 ## [0.02] — 2026-07-07
 
 ### Major update — loops, functions, lists, namespaces, and more

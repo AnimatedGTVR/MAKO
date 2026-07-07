@@ -21,3 +21,4 @@ Thumbs.db
 
 # MAKO-specific
 *.mko.log
+docs/ErrorLoggingCheckThingy.txt
