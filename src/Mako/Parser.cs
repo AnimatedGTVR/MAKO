@@ -35,9 +35,10 @@ class Parser
     {
         string? scriptName = null;
         string? ns         = null;
-        var imports = new List<string>();
-        var fns     = new List<FnDecl>();
-        var body    = new List<Statement>();
+        var packages = new List<string>();
+        var imports  = new List<string>();
+        var fns      = new List<FnDecl>();
+        var body     = new List<Statement>();
         Token? mainTok = null;
 
         if (Check(TokenType.Script))
@@ -52,6 +53,13 @@ class Parser
             Advance();
             ns = Expect(TokenType.Identifier, "expected a namespace name after 'namespace'").Value;
             Expect(TokenType.Semicolon, "namespace name");
+        }
+
+        while (Check(TokenType.Using))
+        {
+            Advance();
+            packages.Add(Expect(TokenType.Identifier, "expected a package name after 'using'").Value);
+            Expect(TokenType.Semicolon, "package name");
         }
 
         while (Check(TokenType.Use))
@@ -88,7 +96,7 @@ class Parser
             {
                 var s = tok.Value is "func" or "function" or "def"
                     ? "fn"
-                    : Suggest.Closest(tok.Value, ["fn", "main", "use", "script", "namespace"]);
+                    : Suggest.Closest(tok.Value, ["fn", "main", "use", "using", "script", "namespace"]);
                 if (s != null) hint = $" (did you mean '{s}'?)";
             }
             throw new MakoError(
@@ -96,7 +104,7 @@ class Parser
                 tok.Line, tok.Col, Math.Max(1, tok.Value.Length));
         }
 
-        return new ProgramNode(scriptName, ns, imports, fns, body);
+        return new ProgramNode(scriptName, ns, packages, imports, fns, body);
     }
 
     // ── Declarations ──────────────────────────────────────────────────────────

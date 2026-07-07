@@ -1,0 +1,157 @@
+script "MAKO Stats";
+
+# ── Math helpers ─────────────────────────────────────────────────────────────
+
+fn total(nums) {
+    s = 0;
+    for n in nums { s += n; }
+    return s;
+}
+
+fn mean(nums) {
+    return total(nums) / len(nums);
+}
+
+fn find_min(nums) {
+    m = nums[0];
+    for n in nums { if n < m { m = n; } }
+    return m;
+}
+
+fn find_max(nums) {
+    m = nums[0];
+    for n in nums { if n > m { m = n; } }
+    return m;
+}
+
+fn sorted(nums) {
+    s = nums + [];
+    i = 0;
+    while i < len(s) {
+        j = 0;
+        while j < len(s) - i - 1 {
+            if s[j] > s[j + 1] {
+                tmp = s[j];
+                s[j] = s[j + 1];
+                s[j + 1] = tmp;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+    return s;
+}
+
+fn median(nums) {
+    s = sorted(nums);
+    mid = floor(len(s) / 2);
+    if len(s) % 2 == 0 {
+        return (s[mid - 1] + s[mid]) / 2;
+    }
+    return s[mid];
+}
+
+fn above(nums, threshold) {
+    result = [];
+    for n in nums { if n > threshold { push(result, n); } }
+    return result;
+}
+
+fn below(nums, threshold) {
+    result = [];
+    for n in nums { if n < threshold { push(result, n); } }
+    return result;
+}
+
+# ── Histogram ────────────────────────────────────────────────────────────────
+
+fn histogram(nums) {
+    lo  = find_min(nums);
+    hi  = find_max(nums);
+    rng = hi - lo;
+
+    if rng == 0 {
+        print "  (all values are {lo})";
+        return none;
+    }
+
+    const BINS = 8;
+    const BAR  = 24;
+
+    counts = [];
+    for i in range(BINS) { push(counts, 0); }
+
+    for n in nums {
+        b = floor((n - lo) / rng * BINS);
+        if b >= BINS { b = BINS - 1; }
+        counts[b] = counts[b] + 1;
+    }
+
+    peak = find_max(counts);
+
+    i = 0;
+    while i < BINS {
+        label = round(lo + i * rng / BINS);
+        bar_len = floor(counts[i] / peak * BAR);
+        bar = "";
+        k = 0;
+        while k < bar_len { bar = bar + "#"; k += 1; }
+        spaces = "";
+        k = 0;
+        while k < BAR - bar_len { spaces = spaces + " "; k += 1; }
+        print "  {label}  |{bar}{spaces}| {counts[i]}";
+        i += 1;
+    }
+}
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+main() {
+    print "";
+    print "  MAKO Stats Calculator";
+    print "  ----------------------";
+    print "  Enter numbers one per line.";
+    print "  Leave blank and press Enter when done.";
+    print "";
+
+    nums = [];
+    while true {
+        raw = input "  > ";
+        if raw == "" { break; }
+        push(nums, to_num(raw));
+    }
+
+    if len(nums) == 0 {
+        print "";
+        print "  No numbers entered.";
+        exit(0);
+    }
+
+    avg = mean(nums);
+    med = median(nums);
+    lo  = find_min(nums);
+    hi  = find_max(nums);
+
+    print "";
+    print "  ── Summary ────────────────────";
+    print "  Count    {len(nums)}";
+    print "  Sum      {total(nums)}";
+    print "  Mean     {round(avg * 100) / 100}";
+    print "  Median   {med}";
+    print "  Min      {lo}";
+    print "  Max      {hi}";
+    print "  Range    {hi - lo}";
+    print "";
+    print "  ── Distribution ───────────────";
+    histogram(nums);
+    print "";
+    print "  ── Sorted ─────────────────────";
+    print "  {sorted(nums)}";
+    print "";
+
+    ab = above(nums, avg);
+    bel = below(nums, avg);
+    print "  Above mean: {len(ab)} value(s)  {ab}";
+    print "  Below mean: {len(bel)} value(s)  {bel}";
+    print "";
+}

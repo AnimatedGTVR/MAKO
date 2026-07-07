@@ -10,6 +10,7 @@ file sealed class ContinueSignal() : Exception;
 class Interpreter
 {
     private readonly Dictionary<string, FnDecl> _funcs = new();
+    private MakoUI? _ui;
 
     // Each scope holds variable values and a set of const names.
     private sealed class Scope
@@ -23,6 +24,42 @@ class Interpreter
 
     public void Execute(ProgramNode program, string baseDir = "")
     {
+        try { ExecuteCore(program, baseDir); }
+        finally { _ui?.Dispose(); _ui = null; }
+    }
+
+    private void ExecuteCore(ProgramNode program, string baseDir)
+    {
+        // ── using PackageName — named packages ───────────────────────────────
+        foreach (var pkg in program.Packages)
+        {
+            PackageManager.Ensure(pkg);
+
+            if (PackageManager.NativePackages.Contains(pkg))
+            {
+                _ui ??= new MakoUI();
+                continue;
+            }
+
+            var indexPath = PackageManager.IndexPath(pkg);
+            if (indexPath == null)
+                throw new MakoError($"package '{pkg}' has no index.mko");
+
+            var pkgSrc = File.ReadAllText(indexPath);
+            ProgramNode pkgAst;
+            try { pkgAst = new Parser(new Lexer(pkgSrc).Tokenize()).Parse(); }
+            catch (MakoError e) when (e.SourcePath is null)
+            { throw new MakoError(e.RawMessage, e.Line, e.Col, e.Length) { SourcePath = indexPath }; }
+
+            var pkgNs = pkgAst.Namespace
+                ?? throw new MakoError($"package '{pkg}' (index.mko) must declare a namespace");
+            foreach (var fn in pkgAst.Functions)
+            {
+                fn.Source = indexPath;
+                _funcs[$"{pkgNs}.{fn.Name}"] = fn;
+            }
+        }
+
         foreach (var importPath in program.Imports)
         {
             var fullPath = Path.IsPathRooted(importPath)
@@ -337,6 +374,16 @@ class Interpreter
         "len", "upper", "lower", "trim", "contains", "starts_with", "ends_with",
         "replace", "split", "join",
         "push", "pop", "first", "last", "reverse", "has",
+        // MakoUI
+        "MakoUI.init", "MakoUI.running", "MakoUI.begin", "MakoUI.end",
+        "MakoUI.begin_window", "MakoUI.end_window",
+        "MakoUI.text", "MakoUI.text_colored", "MakoUI.button", "MakoUI.small_button",
+        "MakoUI.checkbox", "MakoUI.slider", "MakoUI.slider_int",
+        "MakoUI.input_text", "MakoUI.input_number",
+        "MakoUI.separator", "MakoUI.same_line", "MakoUI.spacing", "MakoUI.new_line",
+        "MakoUI.collapsing", "MakoUI.progress",
+        "MakoUI.set_window_size", "MakoUI.set_window_pos",
+        "MakoUI.push_color", "MakoUI.pop_color", "MakoUI.push_var", "MakoUI.pop_var",
     ];
 
     private bool TryBuiltin(string name, List<object?> args, out object? result)
@@ -459,9 +506,172 @@ class Interpreter
                 result = AsList(name, args[0]).Any(v => ValuesEqual(v, args[1]));
                 return true;
 
+            // ── MakoUI ────────────────────────────────────────────────────────
+            case "MakoUI.init":
+                RequireArity(name, args, 3);
+                EnsureUI(name);
+                _ui!.Init(Stringify(args[0]), (int)AsNum(name, args[1]), (int)AsNum(name, args[2]));
+                result = null; return true;
+
+            case "MakoUI.running":
+                RequireArity(name, args, 0);
+                EnsureUI(name);
+                result = _ui!.Running(); return true;
+
+            case "MakoUI.begin":
+                RequireArity(name, args, 0);
+                EnsureUI(name);
+                _ui!.Begin(); result = null; return true;
+
+            case "MakoUI.end":
+                RequireArity(name, args, 0);
+                EnsureUI(name);
+                _ui!.End(); result = null; return true;
+
+            case "MakoUI.begin_window":
+                if (args.Count < 1 || args.Count > 2)
+                    throw new MakoError("MakoUI.begin_window() expects 1 or 2 arguments");
+                EnsureUI(name);
+                result = args.Count == 2
+                    ? _ui!.BeginWindow(Stringify(args[0]), Truthy(args[1]))
+                    : _ui!.BeginWindow(Stringify(args[0]));
+                return true;
+
+            case "MakoUI.end_window":
+                RequireArity(name, args, 0);
+                EnsureUI(name);
+                _ui!.EndWindow(); result = null; return true;
+
+            case "MakoUI.text":
+                RequireArity(name, args, 1);
+                EnsureUI(name);
+                _ui!.Text(Stringify(args[0])); result = null; return true;
+
+            case "MakoUI.text_colored":
+                RequireArity(name, args, 5);
+                EnsureUI(name);
+                _ui!.TextColored(AsNum(name, args[0]), AsNum(name, args[1]),
+                                 AsNum(name, args[2]), AsNum(name, args[3]),
+                                 Stringify(args[4]));
+                result = null; return true;
+
+            case "MakoUI.button":
+                RequireArity(name, args, 1);
+                EnsureUI(name);
+                result = _ui!.Button(Stringify(args[0])); return true;
+
+            case "MakoUI.small_button":
+                RequireArity(name, args, 1);
+                EnsureUI(name);
+                result = _ui!.SmallButton(Stringify(args[0])); return true;
+
+            case "MakoUI.checkbox":
+                RequireArity(name, args, 2);
+                EnsureUI(name);
+                result = _ui!.Checkbox(Stringify(args[0]), Truthy(args[1])); return true;
+
+            case "MakoUI.slider":
+                RequireArity(name, args, 4);
+                EnsureUI(name);
+                result = _ui!.Slider(Stringify(args[0]),
+                    AsNum(name, args[1]), AsNum(name, args[2]), AsNum(name, args[3]));
+                return true;
+
+            case "MakoUI.slider_int":
+                RequireArity(name, args, 4);
+                EnsureUI(name);
+                result = _ui!.SliderInt(Stringify(args[0]),
+                    AsNum(name, args[1]), AsNum(name, args[2]), AsNum(name, args[3]));
+                return true;
+
+            case "MakoUI.input_text":
+                RequireArity(name, args, 2);
+                EnsureUI(name);
+                result = _ui!.InputText(Stringify(args[0]), Stringify(args[1])); return true;
+
+            case "MakoUI.input_number":
+                RequireArity(name, args, 2);
+                EnsureUI(name);
+                result = _ui!.InputNumber(Stringify(args[0]), AsNum(name, args[1])); return true;
+
+            case "MakoUI.separator":
+                RequireArity(name, args, 0);
+                EnsureUI(name); _ui!.Separator(); result = null; return true;
+
+            case "MakoUI.same_line":
+                RequireArity(name, args, 0);
+                EnsureUI(name); _ui!.SameLine(); result = null; return true;
+
+            case "MakoUI.spacing":
+                RequireArity(name, args, 0);
+                EnsureUI(name); _ui!.Spacing(); result = null; return true;
+
+            case "MakoUI.new_line":
+                RequireArity(name, args, 0);
+                EnsureUI(name); _ui!.NewLine(); result = null; return true;
+
+            case "MakoUI.collapsing":
+                RequireArity(name, args, 1);
+                EnsureUI(name);
+                result = _ui!.CollapsingHeader(Stringify(args[0])); return true;
+
+            case "MakoUI.progress":
+                if (args.Count < 1 || args.Count > 2)
+                    throw new MakoError("MakoUI.progress() expects 1 or 2 arguments");
+                EnsureUI(name);
+                _ui!.ProgressBar(AsNum(name, args[0]),
+                    args.Count == 2 ? Stringify(args[1]) : null);
+                result = null; return true;
+
+            case "MakoUI.set_window_size":
+                RequireArity(name, args, 2);
+                EnsureUI(name);
+                _ui!.SetNextWindowSize(AsNum(name, args[0]), AsNum(name, args[1]));
+                result = null; return true;
+
+            case "MakoUI.set_window_pos":
+                RequireArity(name, args, 2);
+                EnsureUI(name);
+                _ui!.SetNextWindowPos(AsNum(name, args[0]), AsNum(name, args[1]));
+                result = null; return true;
+
+            case "MakoUI.push_color":
+                if (args.Count < 4 || args.Count > 5)
+                    throw new MakoError("MakoUI.push_color() expects 4 or 5 arguments (idx, r, g, b [, a])");
+                EnsureUI(name);
+                _ui!.PushStyleColor((int)AsNum(name, args[0]),
+                    AsNum(name, args[1]), AsNum(name, args[2]), AsNum(name, args[3]),
+                    args.Count == 5 ? AsNum(name, args[4]) : 1.0);
+                result = null; return true;
+
+            case "MakoUI.pop_color":
+                if (args.Count > 1) throw new MakoError("MakoUI.pop_color() expects 0 or 1 argument");
+                EnsureUI(name);
+                _ui!.PopStyleColor(args.Count == 1 ? (int)AsNum(name, args[0]) : 1);
+                result = null; return true;
+
+            case "MakoUI.push_var":
+                RequireArity(name, args, 2);
+                EnsureUI(name);
+                _ui!.PushStyleVar((int)AsNum(name, args[0]), AsNum(name, args[1]));
+                result = null; return true;
+
+            case "MakoUI.pop_var":
+                if (args.Count > 1) throw new MakoError("MakoUI.pop_var() expects 0 or 1 argument");
+                EnsureUI(name);
+                _ui!.PopStyleVar(args.Count == 1 ? (int)AsNum(name, args[0]) : 1);
+                result = null; return true;
+
             default:
                 return false;
         }
+    }
+
+    private void EnsureUI(string fn)
+    {
+        if (_ui is null)
+            throw new MakoError(
+                $"{fn}() requires 'using MakoUI;' at the top of the script");
     }
 
     private static void RequireArity(string name, List<object?> args, int expected)

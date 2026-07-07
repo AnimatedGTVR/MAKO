@@ -1,0 +1,38 @@
+script "Counter";
+using MakoUI;
+
+main() {
+    MakoUI.init("Counter", 800, 600);
+
+    count = 0;
+
+    while MakoUI.running() {
+        MakoUI.begin();
+
+        MakoUI.set_window_size(300, 200);
+        MakoUI.set_window_pos(250, 200);
+        MakoUI.begin_window("Counter");
+
+        MakoUI.text("Count: {count}");
+        MakoUI.separator();
+        MakoUI.spacing();
+
+        if MakoUI.button("Increment") {
+            count = count + 1;
+        }
+        MakoUI.same_line();
+        if MakoUI.button("Decrement") {
+            count = count - 1;
+        }
+        MakoUI.same_line();
+        if MakoUI.small_button("Reset") {
+            count = 0;
+        }
+
+        MakoUI.spacing();
+        MakoUI.progress(count / 100.0, "{count}/100");
+
+        MakoUI.end_window();
+        MakoUI.end();
+    }
+}

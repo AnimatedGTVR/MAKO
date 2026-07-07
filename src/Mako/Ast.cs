@@ -11,7 +11,8 @@ record FnDecl(string Name, List<string> Params, List<Statement> Body)
 record ProgramNode(
     string? ScriptName,
     string? Namespace,
-    List<string> Imports,      // "use" file paths
+    List<string> Packages,     // "using PackageName" — named packages with auto-install
+    List<string> Imports,      // "use file.mko"      — local relative file imports
     List<FnDecl> Functions,
     List<Statement> Body
 );
