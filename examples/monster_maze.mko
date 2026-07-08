@@ -2,26 +2,30 @@ using Mako3D;
 using Inputs;
 using Audio;
 
-# MONSTER MAZE — pathfinding AI demo
+# MONSTER MAZE — stealth AI with a vision cone
 #
-#   WASD / arrows — move
-#   P             — show the monster's current path + state
+#   WASD / arrows — move        SHIFT — sneak (slow + silent)
+#   P             — show the monster's A* path
 #   SPACE         — restart
 #
-# Collect all 6 gems. The monster has three AI states:
-#   PATROL (purple) — wanders to random rooms via A* pathfinding
-#   CHASE  (red)    — spotted you (line of sight) — hunts you down, repaths
-#                     to your position twice a second
-#   SEARCH (orange) — lost sight of you — checks the last place it saw you,
-#                     then goes back to patrolling
+# The monster SEES through a forward-facing vision cone (drawn on the
+# floor) — 100° wide, 6 tiles deep, blocked by walls. It also HEARS:
+# running near it alerts it even from behind. Sneak with SHIFT.
 #
-# It cannot see through walls. Break line of sight to escape!
+# AI states:
+#   PATROL (violet) — wanders via A*, scanning side to side
+#   ALERT  (gold)   — heard something, investigating the noise
+#   CHASE  (red)    — you're in its cone — runs you down, repaths constantly
+#   SEARCH (orange) — lost you — checks last seen spot, scans, gives up
 
 const COLS = 17;
 const ROWS = 13;
+const VIEW_RANGE = 6;
+const FOV = 1.75;          # ~100 degrees in radians
+const HEAR_RUN = 3.2;      # hearing radius for a running player
+const HEAR_SNEAK = 0.9;    # hearing radius while sneaking
 
 fn make_grid() {
-    # 1 = wall, 0 = floor
     map = [
         "#################",
         "#.....#....#....#",
@@ -54,10 +58,8 @@ fn make_grid() {
     return grid;
 }
 
-# grid cell → world position (cell centre)
-fn wx(cx) { return cx - 8; }        # COLS/2 = 8.5, offset for centering
+fn wx(cx) { return cx - 8; }
 fn wz(cy) { return cy - 6; }
-
 fn cell_x(world_x) { return round(world_x + 8); }
 fn cell_z(world_z) { return round(world_z + 6); }
 
@@ -69,8 +71,27 @@ fn random_floor(grid) {
     }
 }
 
+# Wrap an angle difference into [-pi, pi]
+fn wrap_angle(a) {
+    p = pi();
+    while a > p { a = a - 2 * p; }
+    while a < 0 - p { a = a + 2 * p; }
+    return a;
+}
+
+# Vision-cone check: in range, inside the cone, and no wall between.
+fn can_see(grid, mx, mz, facing, px, pz) {
+    d = dist(mx, mz, px, pz);
+    if d > VIEW_RANGE { return false; }
+    if d > 0.001 {
+        ang = atan2(pz - mz, px - mx);
+        if abs(wrap_angle(ang - facing)) > FOV / 2 { return false; }
+    }
+    return line_of_sight(grid, cell_x(mx), cell_z(mz), cell_x(px), cell_z(pz));
+}
+
 main() {
-    Mako3D.init(960, 640, "Monster Maze");
+    Mako3D.init(960, 640, "Monster Maze — Stealth");
     Mako3D.fps(60);
 
     cam = Mako3D.camera(0, 16, 9,  0, 0, 0);
@@ -78,6 +99,7 @@ main() {
 
     snd_gem    = Audio.melody("sine", ["E5:0.2", "B5:0.3"], 240);
     snd_spot   = Audio.melody("saw", ["C3:0.15", "F#3:0.3"], 280);
+    snd_heard  = Audio.tone("triangle", 494, 0.2);
     snd_lost   = Audio.tone("triangle", 262, 0.3);
     snd_caught = Audio.melody("saw", ["G3:0.4", "C3:0.8"], 160);
     snd_win    = Audio.melody("square", ["C4:0.4", "E4:0.4", "G4:0.4", "C5:1.2"], 190);
@@ -92,7 +114,6 @@ main() {
     state = "play";
     hurt_cool = 0;
 
-    # ── Gems ─────────────────────────────────────────────────────────────────
     gems = [];
     i = 0;
     while i < 6 {
@@ -102,12 +123,13 @@ main() {
     }
 
     # ── Monster ──────────────────────────────────────────────────────────────
-    m_cell = [15, 11];
     mx = wx(15); mz = wz(11);
-    m_state = "patrol";       # patrol | chase | search
+    facing = pi();            # start looking left
+    m_state = "patrol";       # patrol | alert | chase | search
     m_path = [];
     m_repath = 0;
     m_lost_t = 0;
+    scan_t = 0;               # scanning timer for search/patrol head sweep
     last_seen = [1, 1];
     growl_t = 0;
     show_debug = false;
@@ -119,16 +141,19 @@ main() {
 
         if Inputs.key_pressed("P") { show_debug = not show_debug; }
 
-        # ── Player movement with wall collision ──────────────────────────────
         if state == "play" {
+            # ── Player movement (SHIFT = sneak) ──────────────────────────────
+            sneaking = Inputs.key_down("SHIFT");
             spd = 5.5 * dt;
-            nx = px; nz = pz;
-            if Inputs.key_down("W") or Inputs.key_down("UP")    { nz = nz - spd; }
-            if Inputs.key_down("S") or Inputs.key_down("DOWN")  { nz = nz + spd; }
-            if Inputs.key_down("A") or Inputs.key_down("LEFT")  { nx = nx - spd; }
-            if Inputs.key_down("D") or Inputs.key_down("RIGHT") { nx = nx + spd; }
+            if sneaking { spd = 2.4 * dt; }
 
-            # Try each axis separately so you slide along walls
+            nx = px; nz = pz;
+            moving = false;
+            if Inputs.key_down("W") or Inputs.key_down("UP")    { nz = nz - spd; moving = true; }
+            if Inputs.key_down("S") or Inputs.key_down("DOWN")  { nz = nz + spd; moving = true; }
+            if Inputs.key_down("A") or Inputs.key_down("LEFT")  { nx = nx - spd; moving = true; }
+            if Inputs.key_down("D") or Inputs.key_down("RIGHT") { nx = nx + spd; moving = true; }
+
             if grid[cell_z(pz)][cell_x(nx)] == 0 { px = nx; }
             if grid[cell_z(nz)][cell_x(px)] == 0 { pz = nz; }
 
@@ -145,20 +170,54 @@ main() {
                 i = i + 1;
             }
 
-            # ── Monster AI state machine ─────────────────────────────────────
-            pcx = cell_x(px);  pcz = cell_z(pz);
-            mcx = cell_x(mx);  mcz = cell_z(mz);
-            sees = line_of_sight(grid, mcx, mcz, pcx, pcz);
+            # ── Senses ───────────────────────────────────────────────────────
+            mcx = cell_x(mx); mcz = cell_z(mz);
+            pcx = cell_x(px); pcz = cell_z(pz);
 
+            sees = can_see(grid, mx, mz, facing, px, pz);
+
+            hear_r = HEAR_SNEAK;
+            if moving and not sneaking { hear_r = HEAR_RUN; }
+            hears = moving and dist(px, pz, mx, mz) < hear_r;
+
+            # ── State machine ────────────────────────────────────────────────
             if m_state == "patrol" {
+                # Head sweep while walking: facing wiggles around path direction
                 if sees {
                     m_state = "chase";
                     Audio.play(snd_spot);
+                    m_path = find_path(grid, mcx, mcz, pcx, pcz);
+                } else { if hears {
+                    m_state = "alert";
+                    Audio.play(snd_heard);
+                    last_seen = [pcx, pcz];
                     m_path = find_path(grid, mcx, mcz, pcx, pcz);
                 } else {
                     if len(m_path) == 0 {
                         target = random_floor(grid);
                         m_path = find_path(grid, mcx, mcz, target[0], target[1]);
+                    }
+                }}
+            }
+
+            if m_state == "alert" {
+                if sees {
+                    m_state = "chase";
+                    Audio.play(snd_spot);
+                    m_path = find_path(grid, mcx, mcz, pcx, pcz);
+                } else {
+                    if hears {
+                        # keep updating where the noise is
+                        last_seen = [pcx, pcz];
+                        m_repath = m_repath + dt;
+                        if m_repath > 0.6 {
+                            m_repath = 0;
+                            m_path = find_path(grid, mcx, mcz, pcx, pcz);
+                        }
+                    }
+                    if len(m_path) == 0 {
+                        m_state = "search";   # reached the noise — look around
+                        scan_t = 0;
                     }
                 }
             }
@@ -168,15 +227,16 @@ main() {
                     m_lost_t = 0;
                     last_seen = [pcx, pcz];
                     m_repath = m_repath + dt;
-                    if m_repath > 0.5 {
+                    if m_repath > 0.4 {
                         m_repath = 0;
                         m_path = find_path(grid, mcx, mcz, pcx, pcz);
                     }
                 } else {
                     m_lost_t = m_lost_t + dt;
-                    if m_lost_t > 1.2 {
+                    if m_lost_t > 1.0 {
                         m_state = "search";
                         Audio.play(snd_lost);
+                        scan_t = 0;
                         m_path = find_path(grid, mcx, mcz, last_seen[0], last_seen[1]);
                     }
                 }
@@ -189,14 +249,18 @@ main() {
                     m_path = find_path(grid, mcx, mcz, pcx, pcz);
                 } else {
                     if len(m_path) == 0 {
-                        m_state = "patrol";     # gave up
+                        # At the last-seen spot: stand and sweep the cone around
+                        scan_t = scan_t + dt;
+                        facing = facing + dt * 2.2;
+                        if scan_t > 3 { m_state = "patrol"; }
                     }
                 }
             }
 
-            # ── Follow the path ──────────────────────────────────────────────
-            m_speed = 3.2;
-            if m_state == "chase" { m_speed = 4.6; }
+            # ── Move along path + face movement direction ────────────────────
+            m_speed = 2.8;
+            if m_state == "chase" { m_speed = 4.8; }
+            if m_state == "alert" { m_speed = 3.6; }
             if len(m_path) > 0 {
                 step = m_path[0];
                 tx = wx(step[0]);
@@ -207,31 +271,37 @@ main() {
                 } else {
                     mx = mx + (tx - mx) / d * m_speed * dt;
                     mz = mz + (tz - mz) / d * m_speed * dt;
+                    # Smoothly turn toward movement direction
+                    want = atan2(tz - mz, tx - mx);
+                    facing = facing + wrap_angle(want - facing) * min(1, 8 * dt);
+                }
+                # Patrol head-sweep on top of walk direction
+                if m_state == "patrol" {
+                    facing = facing + sin(t * 1.8) * dt * 1.2;
                 }
             }
 
-            # Growl louder as it gets closer (3D positional)
             growl_t = growl_t + dt;
             if growl_t > 1.4 {
                 growl_t = 0;
                 Audio.play_3d(snd_growl, mx, 1, mz,  px, 1, pz);
             }
 
-            # Caught?
             hurt_cool = max(0, hurt_cool - dt);
             if hurt_cool == 0 and dist(px, pz, mx, mz) < 0.8 {
                 lives = lives - 1;
                 hurt_cool = 2;
                 Audio.play(snd_caught);
-                px = wx(1); pz = wz(1);       # back to spawn
+                px = wx(1); pz = wz(1);
+                m_state = "patrol"; m_path = [];
                 if lives <= 0 { state = "lose"; }
             }
         }
 
-        # Restart
         if state != "play" and Inputs.key_pressed("SPACE") {
             px = wx(1); pz = wz(1);
             mx = wx(15); mz = wz(11);
+            facing = pi();
             m_state = "patrol"; m_path = [];
             lives = 3; score = 0; state = "play"; hurt_cool = 0;
             gems = [];
@@ -243,7 +313,6 @@ main() {
             }
         }
 
-        # ── Camera: overhead follow ──────────────────────────────────────────
         Mako3D.move_camera(cam, px, 15, pz + 8,  px, 0, pz);
 
         # ── Draw ─────────────────────────────────────────────────────────────
@@ -254,7 +323,6 @@ main() {
 
         Mako3D.plane(0.5, 0, 0.5, COLS, ROWS, Mako3D.color(30, 32, 40));
 
-        # Walls
         y = 0;
         while y < ROWS {
             x = 0;
@@ -267,7 +335,6 @@ main() {
             y = y + 1;
         }
 
-        # Gems
         i = 0;
         while i < 6 {
             g = gems[i];
@@ -278,15 +345,40 @@ main() {
             i = i + 1;
         }
 
-        # Monster — color shows its AI state
+        # ── Vision cone: raycast rays across the FOV, stop at walls ──────────
+        cone_col = Mako3D.fade(Mako3D.VIOLET, 0.5);
+        if m_state == "chase"  { cone_col = Mako3D.fade(Mako3D.RED, 0.7); }
+        if m_state == "alert"  { cone_col = Mako3D.fade(Mako3D.GOLD, 0.6); }
+        if m_state == "search" { cone_col = Mako3D.fade(Mako3D.ORANGE, 0.6); }
+        r = 0;
+        while r < 9 {
+            ray_a = facing - FOV / 2 + FOV * r / 8;
+            rdx = cos(ray_a);
+            rdz = sin(ray_a);
+            # step until wall or max range
+            step_d = 0.3;
+            reach = 0;
+            hit = false;
+            while reach < VIEW_RANGE and not hit {
+                reach = reach + step_d;
+                cx2 = cell_x(mx + rdx * reach);
+                cz2 = cell_z(mz + rdz * reach);
+                if grid[cz2][cx2] == 1 { hit = true; reach = reach - step_d; }
+            }
+            Mako3D.line3d(mx, 0.15, mz,  mx + rdx * reach, 0.15, mz + rdz * reach, cone_col);
+            r = r + 1;
+        }
+
+        # Monster body + facing eye
         m_col = Mako3D.VIOLET;
         if m_state == "chase"  { m_col = Mako3D.RED; }
+        if m_state == "alert"  { m_col = Mako3D.GOLD; }
         if m_state == "search" { m_col = Mako3D.ORANGE; }
         pulse = 1 + sin(t * 8) * 0.08;
         Mako3D.cube(mx, 0.8 * pulse, mz, 0.9, 1.6 * pulse, 0.9, m_col);
-        Mako3D.sphere(mx, 1.7, mz, 0.18, Mako3D.WHITE);   # eye
+        # Eye sits on the front face, showing where it looks
+        Mako3D.sphere(mx + cos(facing) * 0.5, 1.5, mz + sin(facing) * 0.5, 0.16, Mako3D.WHITE);
 
-        # Debug: draw the monster's path
         if show_debug {
             i = 0;
             while i < len(m_path) - 1 {
@@ -297,23 +389,27 @@ main() {
             }
         }
 
-        # Player
         show_player = true;
         if hurt_cool > 0 and floor(hurt_cool * 8) % 2 == 0 { show_player = false; }
         if show_player {
-            Mako3D.cube(px, 0.5, pz, 0.7, 1, 0.7, Mako3D.GOLD);
+            p_col = Mako3D.GOLD;
+            if Inputs.key_down("SHIFT") { p_col = Mako3D.fade(Mako3D.GOLD, 0.55); }
+            p_h = 1;
+            if Inputs.key_down("SHIFT") { p_h = 0.6; }
+            Mako3D.cube(px, p_h / 2, pz, 0.7, p_h, 0.7, p_col);
         }
 
         Mako3D.end_3d();
 
         # ── HUD ──────────────────────────────────────────────────────────────
         Mako3D.text("GEMS {score}/6    LIVES {lives}", 16, 14, 24, Mako3D.WHITE);
-        state_txt = "The monster patrols...";
+        state_txt = "It patrols, scanning...";
         state_col = Mako3D.VIOLET;
+        if m_state == "alert"  { state_txt = "It heard something!"; state_col = Mako3D.GOLD; }
         if m_state == "chase"  { state_txt = "IT SEES YOU — RUN!"; state_col = Mako3D.RED; }
         if m_state == "search" { state_txt = "It's searching where it saw you..."; state_col = Mako3D.ORANGE; }
         Mako3D.text(state_txt, 16, 46, 18, state_col);
-        Mako3D.text("P = show AI path", 16, 610, 14, Mako3D.GRAY);
+        Mako3D.text("SHIFT = sneak (silent)    P = show AI path", 16, 610, 14, Mako3D.GRAY);
         Mako3D.draw_fps(890, 14);
 
         if state == "win" {
