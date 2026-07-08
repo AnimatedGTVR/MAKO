@@ -156,6 +156,15 @@ if (args[0] == "test")
             var program = new Parser(tokens).Parse();
             var baseDir = Path.GetDirectoryName(Path.GetFullPath(file)) ?? ".";
             new Interpreter().Execute(program, baseDir);
+
+            // Re-run through mko fmt too: a formatter bug that silently changes
+            // semantics (e.g. dropping precedence-changing parens) won't show up
+            // running the original source — only running the *formatted* output.
+            var formatted     = Formatter.Format(src);
+            var formattedToks = new Lexer(formatted).Tokenize();
+            var formattedProg = new Parser(formattedToks).Parse();
+            new Interpreter().Execute(formattedProg, baseDir);
+
             Console.WriteLine($"PASS  {rel}");
             passed++;
         }

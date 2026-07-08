@@ -24,4 +24,11 @@ main() {
 
     assert(f(5) == 10, "lambda still works after being formatted-over");
     assert(d["b"] == 2, "dict still works");
+
+    # Precedence-changing parens must round-trip through mko fmt unchanged —
+    # the formatter used to drop them, silently turning (2+3)*20 into 2+3*20.
+    assert((2 + 3) * 20 == 100, "parens raise + above * before multiply");
+    assert(10 - (3 - 1) == 8, "parens override left-associativity of -");
+    assert(not (true and false), "parens override and inside not");
+    assert(-(4 + 5) == -9, "parens bind unary minus over the whole sum");
 }

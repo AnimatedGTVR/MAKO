@@ -265,7 +265,7 @@ static class Formatter
             IndexExpr ix            => $"{Expr(ix.Target)}[{Expr(ix.Index)}]",
             UnaryExpr u             => UnaryExpr(u),
             BinaryExpr b            => BinaryExpr(b),
-            LogicalExpr l           => $"{Expr(l.Left)} {l.Op} {Expr(l.Right)}",
+            LogicalExpr l           => LogicalExprStr(l),
             InputExpr inp           => $"input {Expr(inp.Prompt)}",
             CallExpr c              => $"{c.Name}({string.Join(", ", c.Args.Select(Expr))})",
             NamespacedCallExpr n    => $"{n.Ns}.{n.Func}({string.Join(", ", n.Args.Select(Expr))})",
@@ -307,30 +307,71 @@ static class Formatter
             return sb2.ToString();
         }
 
-        // Statement rendered inline for lambda block bodies.
-        private string InlineStmt(Statement s) => s switch
+        // Renders one statement for a lambda block body, reusing the full
+        // PrintStmt logic (if/while/for/try/etc.) instead of a narrow subset —
+        // the previous version silently dropped anything it didn't special-case
+        // (e.g. an `if` inside a lambda body) down to a `/* ... */` placeholder,
+        // deleting real logic on format.
+        private string InlineStmt(Statement s)
         {
-            ReturnStmt r   => r.Value != null ? $"return {Expr(r.Value)};" : "return;",
-            PrintStmt p    => $"print {Expr(p.Value)};",
-            AssignStmt a   => $"{a.Name} = {Expr(a.Value)};",
-            ExprStmt e     => $"{Expr(e.Value)};",
-            BreakStmt      => "break;",
-            ContinueStmt   => "continue;",
-            _              => "/* ... */",
-        };
+            var mark = _sb.Length;
+            PrintStmt(s);
+            var rendered = _sb.ToString(mark, _sb.Length - mark);
+            _sb.Length = mark;
+            // PrintStmt indents with the current Pad and appends via Line(),
+            // which already includes Pad — strip it since the caller supplies
+            // its own leading indentation for the first line.
+            return rendered.TrimEnd('\n', '\r').TrimStart(' ');
+        }
 
         private string UnaryExpr(UnaryExpr u)
         {
-            var operand = Expr(u.Operand);
+            var operand = ExprAtPrecedence(u.Operand, Precedence("*"), isRightOperand: false);
             return u.Op == "not" ? $"not {operand}" : $"{u.Op}{operand}";
+        }
+
+        private string LogicalExprStr(LogicalExpr l)
+        {
+            var left  = ExprAtPrecedence(l.Left, Precedence(l.Op), isRightOperand: false);
+            var right = ExprAtPrecedence(l.Right, Precedence(l.Op), isRightOperand: true);
+            return $"{left} {l.Op} {right}";
         }
 
         private string BinaryExpr(BinaryExpr b)
         {
-            // Detect to_str() wrappers from template string expansion — skip wrapping.
-            var left  = Expr(b.Left);
-            var right = Expr(b.Right);
+            var left  = ExprAtPrecedence(b.Left, Precedence(b.Op), isRightOperand: false);
+            var right = ExprAtPrecedence(b.Right, Precedence(b.Op), isRightOperand: true);
             return $"{left} {b.Op} {right}";
+        }
+
+        // Operator precedence, low to high — mirrors the parser's ParseLogical ->
+        // ParseComparison -> ParseAddition -> ParseMultiply chain. All operators here
+        // are left-associative, so a child using the *same* precedence only needs
+        // parens when it's the right operand (e.g. a - (b - c) != (a - b) - c).
+        private static int Precedence(string op) => op switch
+        {
+            "and" or "or"                                     => 0,
+            "==" or "!=" or "<" or ">" or "<=" or ">="         => 1,
+            "+" or "-"                                         => 2,
+            "*" or "/" or "%"                                  => 3,
+            _                                                   => 4,
+        };
+
+        private string ExprAtPrecedence(Expr child, int parentPrec, bool isRightOperand)
+        {
+            var childOp = child switch
+            {
+                BinaryExpr cb  => cb.Op,
+                LogicalExpr cl => cl.Op,
+                _              => null,
+            };
+            if (childOp == null) return Expr(child);
+
+            var childPrec = Precedence(childOp);
+            var needsParens = childPrec < parentPrec ||
+                               (childPrec == parentPrec && isRightOperand);
+            var rendered = Expr(child);
+            return needsParens ? $"({rendered})" : rendered;
         }
 
         private static string FormatNumber(double d)
@@ -340,7 +381,14 @@ static class Formatter
             return d.ToString("G", System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        // A plain StringLit holds the fully-decoded value — { and } are literal
+        // characters here, not interpolation syntax. But MAKO string syntax reads
+        // any single brace as the start of `{expr}` interpolation, so a literal
+        // brace must be re-doubled ({{ / }}) or the next parse would silently
+        // reinterpret it as an expression (e.g. "literal {{brace}}" round-tripping
+        // into "literal {brace}", which fails to parse `brace` as a variable).
         private static string Escape(string s) =>
-            s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+            s.Replace("\\", "\\\\").Replace("\"", "\\\"")
+             .Replace("{", "{{").Replace("}", "}}");
     }
 }
