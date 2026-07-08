@@ -565,6 +565,8 @@ class Interpreter
     [
         "type", "to_num", "to_str", "exit", "assert",
         "abs", "floor", "ceil", "sqrt", "round", "pow", "max", "min", "range",
+        "clamp", "lerp", "sign", "sin", "cos", "tan", "atan2", "pi",
+        "dist", "rects_overlap", "circles_overlap", "point_in_rect",
         "len", "upper", "lower", "trim", "contains", "starts_with", "ends_with",
         "replace", "split", "join",
         "push", "pop", "first", "last", "reverse", "has",
@@ -671,6 +673,52 @@ class Interpreter
             case "pow":   RequireArity(name, args, 2); result = Math.Pow(AsNum(name, args[0]), AsNum(name, args[1])); return true;
             case "max":   RequireArity(name, args, 2); result = Math.Max(AsNum(name, args[0]), AsNum(name, args[1])); return true;
             case "min":   RequireArity(name, args, 2); result = Math.Min(AsNum(name, args[0]), AsNum(name, args[1])); return true;
+            case "clamp": RequireArity(name, args, 3);
+                result = Math.Clamp(AsNum(name, args[0]), AsNum(name, args[1]), AsNum(name, args[2])); return true;
+            case "lerp":  RequireArity(name, args, 3);
+            {
+                double la = AsNum(name, args[0]), lb = AsNum(name, args[1]), lt = AsNum(name, args[2]);
+                result = la + (lb - la) * lt; return true;
+            }
+            case "sign":  RequireArity(name, args, 1); result = (double)Math.Sign(AsNum(name, args[0])); return true;
+            case "sin":   RequireArity(name, args, 1); result = Math.Sin(AsNum(name, args[0])); return true;
+            case "cos":   RequireArity(name, args, 1); result = Math.Cos(AsNum(name, args[0])); return true;
+            case "tan":   RequireArity(name, args, 1); result = Math.Tan(AsNum(name, args[0])); return true;
+            case "atan2": RequireArity(name, args, 2); result = Math.Atan2(AsNum(name, args[0]), AsNum(name, args[1])); return true;
+            case "pi":    RequireArity(name, args, 0); result = Math.PI; return true;
+
+            // ── Geometry / collision (for games) ─────────────────────────────
+            case "dist":  RequireArity(name, args, 4);
+            {
+                double dxx = AsNum(name, args[2]) - AsNum(name, args[0]);
+                double dyy = AsNum(name, args[3]) - AsNum(name, args[1]);
+                result = Math.Sqrt(dxx * dxx + dyy * dyy); return true;
+            }
+            case "rects_overlap": RequireArity(name, args, 8);
+            {
+                double ax = AsNum(name, args[0]), ay = AsNum(name, args[1]);
+                double aw = AsNum(name, args[2]), ah = AsNum(name, args[3]);
+                double bx = AsNum(name, args[4]), by = AsNum(name, args[5]);
+                double bw = AsNum(name, args[6]), bh = AsNum(name, args[7]);
+                result = ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+                return true;
+            }
+            case "circles_overlap": RequireArity(name, args, 6);
+            {
+                double cdx = AsNum(name, args[3]) - AsNum(name, args[0]);
+                double cdy = AsNum(name, args[4]) - AsNum(name, args[1]);
+                double rr  = AsNum(name, args[2]) + AsNum(name, args[5]);
+                result = cdx * cdx + cdy * cdy <= rr * rr;
+                return true;
+            }
+            case "point_in_rect": RequireArity(name, args, 6);
+            {
+                double px = AsNum(name, args[0]), py = AsNum(name, args[1]);
+                double rx = AsNum(name, args[2]), ry = AsNum(name, args[3]);
+                result = px >= rx && px <= rx + AsNum(name, args[4])
+                      && py >= ry && py <= ry + AsNum(name, args[5]);
+                return true;
+            }
 
             // ── Range ─────────────────────────────────────────────────────────
             case "range":
