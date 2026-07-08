@@ -12,6 +12,7 @@ using Inputs;
 #   WASD/arrows fly, Q/E up/down, middle mouse orbit, scroll zoom
 #   SPACE toggles the wireframe on the orbiting sphere
 #   R removes a random cube from the grid
+#   Left click an object to select it (highlighted with a gold outline)
 
 main() {
     Mako3D.init(1000, 680, "Mako3D Scene Demo");
@@ -48,6 +49,7 @@ main() {
 
     t = 0;
     wires_on = true;
+    selected = none;
 
     while Mako3D.running() {
         dt = Mako3D.delta();
@@ -67,6 +69,13 @@ main() {
             victim = grid_handles[random_int(0, len(grid_handles) - 1)];
             Mako3D.remove_object(victim);
             grid_handles = filter(grid_handles, fn(h) => h != victim);
+            if victim == selected { selected = none; }
+        }
+
+        # Click to select — a ray/AABB pick against every spawned object.
+        if Inputs.mouse_pressed("left") {
+            selected = Mako3D.pick_object(cam);
+            if selected != none { print "picked handle {selected}"; }
         }
 
         Mako3D.begin();
@@ -76,10 +85,24 @@ main() {
 
         Mako3D.draw_scene();   # <- every spawned object, in one call
 
+        # Selection highlight: a gold wireframe box slightly larger than the
+        # picked object's own bounds — no need to touch its actual color.
+        if selected != none {
+            b = Mako3D.object_bounds(selected);
+            if b == none {
+                selected = none;   # the object was removed since being picked
+            } else {
+                cx = (b[0] + b[3]) / 2; cy = (b[1] + b[4]) / 2; cz = (b[2] + b[5]) / 2;
+                sx = b[3] - b[0] + 0.15; sy = b[4] - b[1] + 0.15; sz = b[5] - b[2] + 0.15;
+                Mako3D.wire_cube(cx, cy, cz,  sx, sy, sz,  Mako3D.GOLD);
+            }
+        }
+
         Mako3D.end_3d();
 
         Mako3D.text("Mako3D scene: {Mako3D.object_count()} objects", 10, 10, 20, Mako3D.WHITE);
-        Mako3D.text("SPACE: toggle orbiter wireframe   R: remove a random grid cube", 10, 36, 15, Mako3D.LIGHTGRAY);
+        Mako3D.text("SPACE: toggle orbiter wireframe   R: remove a random grid cube   Click: select", 10, 36, 15, Mako3D.LIGHTGRAY);
+        if selected != none { Mako3D.text("Selected: handle {selected}", 10, 58, 15, Mako3D.GOLD); }
         Mako3D.draw_fps(900, 10);
         Mako3D.end();
     }

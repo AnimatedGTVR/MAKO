@@ -49,6 +49,7 @@ Everything between `begin_3d(cam)` and `end_3d()` renders in 3D; text and
 |---|---|
 | `cube(x,y,z, w,h,d, color)` | Cube with black wireframe |
 | `cube_raw(...)` | Cube without wireframe |
+| `wire_cube(x,y,z, w,h,d, color)` | Outline only, no filled faces — selection highlights, debug bounds |
 | `sphere(x,y,z, r, color)` / `sphere_raw(...)` | Sphere |
 | `cylinder(x,y,z, r_top, r_bottom, height, color)` | Cylinder |
 | `plane(x,y,z, width, depth, color)` | Flat ground plane |
@@ -120,8 +121,38 @@ box3d_overlap(min1x,min1y,min1z, max1x,max1y,max1z,      # two AABBs —
               min2x,min2y,min2z, max2x,max2y,max2z)      # object_bounds()'s own format
 ```
 
+### Picking (click-to-select)
+
+```mako
+selected = Mako3D.pick_object(cam);   # under the current mouse position
+Mako3D.pick_object(cam, screen_x, screen_y);   # or an explicit point
+```
+
+Casts a ray from the camera through the given screen point (or the mouse,
+by default) and returns the handle of the closest visible object it hits —
+or `none` if nothing was under it. Ray/AABB test against `object_bounds()`,
+so it ignores rotation the same way bounds do, and skips hidden objects.
+
+```mako
+if Inputs.mouse_pressed("left") { selected = Mako3D.pick_object(cam); }
+
+if selected != none {
+    b = Mako3D.object_bounds(selected);
+    if b == none {
+        selected = none;   # it was removed since being picked
+    } else {
+        cx = (b[0]+b[3])/2; cy = (b[1]+b[4])/2; cz = (b[2]+b[5])/2;
+        Mako3D.wire_cube(cx, cy, cz,  b[3]-b[0]+0.1, b[4]-b[1]+0.1, b[5]-b[2]+0.1, Mako3D.GOLD);
+    }
+}
+```
+
+That pattern — pick on click, draw a `wire_cube` around the current bounds
+each frame, drop the selection if `object_bounds()` comes back `none` — is
+the whole click-to-select loop. See `examples/scene_demo.mko`.
+
 See `examples/scene_demo.mko` for a scene with dozens of objects, a
-rotating handle-driven pillar, and runtime removal.
+rotating handle-driven pillar, runtime removal, and click-to-select.
 
 ## Input extras
 

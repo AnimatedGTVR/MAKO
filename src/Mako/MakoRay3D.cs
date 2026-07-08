@@ -224,6 +224,18 @@ static class MakoRay3D
         return null;
     }
 
+    /// wire_cube(x,y,z, w,h,d, color) — outline only, no filled faces.
+    /// Handy for selection highlights and debug bounds (e.g. object_bounds()).
+    public static object? DrawWireCube(List<object?> a)
+    {
+        var pos = Vec3(a, 0);
+        float w = (float)Convert.ToDouble(a[3]);
+        float h = (float)Convert.ToDouble(a[4]);
+        float d = (float)Convert.ToDouble(a[5]);
+        Raylib.DrawCubeWires(pos, w, h, d, a.Count > 6 ? MakoRay.ToColor(a[6]) : Color.White);
+        return null;
+    }
+
     /// sphere(x, y, z,  radius,  color)
     public static object? DrawSphere(List<object?> a)
     {
@@ -535,18 +547,20 @@ static class MakoRay3D
     /// object_bounds(handle) → [min_x,min_y,min_z, max_x,max_y,max_z] — an
     /// axis-aligned box around the object, ignoring rotation. Feed into
     /// box3d_overlap()/dist() for simple 3D collision against other objects.
+    private static Vector3 ObjectHalfExtent(SceneObject o) => o.Shape switch
+    {
+        ObjShape.Cube     => o.Scale / 2f,
+        ObjShape.Sphere   => new Vector3(o.Scale.X, o.Scale.X, o.Scale.X),
+        ObjShape.Cylinder => new Vector3(Math.Max(o.Scale.X, o.Scale.Y), o.Scale.Z / 2f, Math.Max(o.Scale.X, o.Scale.Y)),
+        ObjShape.Plane    => new Vector3(o.Scale.X / 2f, 0.01f, o.Scale.Z / 2f),
+        _                 => Vector3.One,
+    };
+
     public static object? ObjectBounds(List<object?> a)
     {
         var o = GetObj(a);
         if (o is null) return null;
-        Vector3 half = o.Shape switch
-        {
-            ObjShape.Cube     => o.Scale / 2f,
-            ObjShape.Sphere   => new Vector3(o.Scale.X, o.Scale.X, o.Scale.X),
-            ObjShape.Cylinder => new Vector3(Math.Max(o.Scale.X, o.Scale.Y), o.Scale.Z / 2f, Math.Max(o.Scale.X, o.Scale.Y)),
-            ObjShape.Plane    => new Vector3(o.Scale.X / 2f, 0.01f, o.Scale.Z / 2f),
-            _                 => Vector3.One,
-        };
+        var half = ObjectHalfExtent(o);
         var min = o.Pos - half;
         var max = o.Pos + half;
         return new List<object?>
@@ -598,6 +612,40 @@ static class MakoRay3D
         return null;
     }
 
+    /// pick_object(cam, [screen_x, screen_y]) → handle of the closest
+    /// visible spawned object under the given screen point (defaults to the
+    /// current mouse position), or none if nothing was hit. Click-to-select,
+    /// for editors/toolbars — ray/AABB test against object_bounds(), ignoring
+    /// rotation (same as object_bounds() itself).
+    public static object? PickObject(List<object?> a)
+    {
+        int camId = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : 0;
+        if (camId < 0 || camId >= _cameras.Count) return null;
+
+        var screenPos = a.Count > 2
+            ? new Vector2((float)Convert.ToDouble(a[1]), (float)Convert.ToDouble(a[2]))
+            : Raylib.GetMousePosition();
+
+        var ray = Raylib.GetScreenToWorldRay(screenPos, _cameras[camId]);
+
+        int best = -1;
+        float bestDist = float.MaxValue;
+        for (int i = 0; i < _objects.Count; i++)
+        {
+            var o = _objects[i];
+            if (o is null || !o.Visible) continue;
+            var half = ObjectHalfExtent(o);
+            var box = new BoundingBox(o.Pos - half, o.Pos + half);
+            var hit = Raylib.GetRayCollisionBox(ray, box);
+            if (hit.Hit && hit.Distance < bestDist)
+            {
+                bestDist = hit.Distance;
+                best = i;
+            }
+        }
+        return best >= 0 ? (object?)(double)best : null;
+    }
+
     // ── Cleanup ───────────────────────────────────────────────────────────────
 
     public static void UnloadAll()
@@ -645,6 +693,7 @@ static class MakoRay3D
         ["camera_pos"]   = CameraPos,
         ["begin_3d"]     = Begin3D,       ["end_3d"]       = End3D,
         ["cube"]         = DrawCube,      ["cube_raw"]     = DrawCubeRaw,
+        ["wire_cube"]    = DrawWireCube,
         ["sphere"]       = DrawSphere,    ["sphere_raw"]   = DrawSphereRaw,
         ["cylinder"]     = DrawCylinder,  ["plane"]        = DrawPlane,
         ["grid"]         = DrawGrid,      ["line3d"]       = DrawLine3D,
@@ -676,5 +725,6 @@ static class MakoRay3D
         ["object_count"]       = ObjectCount,
         ["object_bounds"]      = ObjectBounds,
         ["draw_scene"]         = DrawScene,
+        ["pick_object"]        = PickObject,
     };
 }
