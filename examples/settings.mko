@@ -81,8 +81,9 @@ main() {
     # FPS history for the graph (last 90 frames)
     history = [];
 
-    # Bouncing coin
-    cx = 300; cy = 250; cdx = 4; cdy = 3;
+    # Bouncing coin — speed in pixels/second, scaled by delta time so the
+    # ball moves the same real-world speed at any FPS cap
+    cx = 300; cy = 250; cdx = 240; cdy = 180;
 
     while Mako2D.running() {
         dt = Mako2D.delta();
@@ -91,8 +92,8 @@ main() {
         if Inputs.key_pressed("TAB") { show_settings = not show_settings; }
 
         # ── Coin ─────────────────────────────────────────────────────────────
-        cx = cx + cdx;
-        cy = cy + cdy;
+        cx = cx + cdx * dt;
+        cy = cy + cdy * dt;
         bounced = false;
         if cx < 16 or cx > WIDTH - 16  { cdx = -cdx; bounced = true; }
         if cy < 16 or cy > HEIGHT - 16 { cdy = -cdy; bounced = true; }
