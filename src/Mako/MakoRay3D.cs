@@ -180,6 +180,15 @@ static class MakoRay3D
         return null;
     }
 
+    /// camera_pos(handle) → [x, y, z] of the camera's position
+    public static object? CameraPos(List<object?> a)
+    {
+        int id = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : 0;
+        if (id < 0 || id >= _cameras.Count) return new List<object?> { 0d, 0d, 0d };
+        var p = _cameras[id].Position;
+        return new List<object?> { (object?)(double)p.X, (double)p.Y, (double)p.Z };
+    }
+
     public static object? Begin3D(List<object?> a)
     {
         int id = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : 0;
@@ -417,6 +426,7 @@ static class MakoRay3D
         ["title"]        = SetTitle,      ["draw_fps"]     = DrawFps,
         ["camera"]       = MakeCamera,    ["move_camera"]  = MoveCamera,
         ["orbit_camera"] = OrbitCamera,  ["update_camera"]= UpdateCamera,
+        ["camera_pos"]   = CameraPos,
         ["begin_3d"]     = Begin3D,       ["end_3d"]       = End3D,
         ["cube"]         = DrawCube,      ["cube_raw"]     = DrawCubeRaw,
         ["sphere"]       = DrawSphere,    ["sphere_raw"]   = DrawSphereRaw,

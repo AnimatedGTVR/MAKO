@@ -1,0 +1,136 @@
+using Mako2D;
+using Inputs;
+using Audio;
+
+# MAKO Music Maker
+#   A S D F G H J K  — play piano notes (C4 – C5)
+#   W E   T Y U      — sharps
+#   1 2 3 4 5        — switch waveform: sine, square, saw, triangle, noise
+#   M                — play a baked melody (Ode to Joy)
+#   Click anywhere   — positional pop (pans left/right, fades with distance)
+
+fn build_piano(wave) {
+    # Pre-bake one sound per key for instant playback
+    notes = ["C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5"];
+    sounds = [];
+    for n in notes {
+        push(sounds, Audio.note(wave, n, 0.4));
+    }
+    return sounds;
+}
+
+fn build_sharps(wave) {
+    notes = ["C#4", "D#4", "F#4", "G#4", "A#4"];
+    sounds = [];
+    for n in notes {
+        push(sounds, Audio.note(wave, n, 0.4));
+    }
+    return sounds;
+}
+
+main() {
+    Mako2D.init(720, 420, "MAKO Music Maker");
+    Mako2D.fps(60);
+
+    waves = ["sine", "square", "saw", "triangle", "noise"];
+    wave_i = 0;
+    wave = "sine";
+
+    piano  = build_piano(wave);
+    sharps = build_sharps(wave);
+    keys       = ["A", "S", "D", "F", "G", "H", "J", "K"];
+    sharp_keys = ["W", "E", "T", "Y", "U"];
+    labels     = ["C", "D", "E", "F", "G", "A", "B", "C"];
+
+    # Ode to Joy — baked into a single clip
+    tune = Audio.melody(wave, [
+        "E4", "E4", "F4", "G4", "G4", "F4", "E4", "D4",
+        "C4", "C4", "D4", "E4", "E4:1.5", "D4:0.5", "D4:2",
+        "E4", "E4", "F4", "G4", "G4", "F4", "E4", "D4",
+        "C4", "C4", "D4", "E4", "D4:1.5", "C4:0.5", "C4:2"
+    ], 140);
+
+    pop = Audio.tone("triangle", 660, 0.15);
+    pressed_flash = [0, 0, 0, 0, 0, 0, 0, 0];
+
+    while Mako2D.running() {
+        # Waveform switching — rebuild the piano with the new timbre
+        i = 0;
+        while i < 5 {
+            num = to_str(i + 1);
+            if Inputs.key_pressed(num) {
+                wave_i = i;
+                wave = waves[wave_i];
+                piano  = build_piano(wave);
+                sharps = build_sharps(wave);
+                tune = Audio.melody(wave, [
+                    "E4", "E4", "F4", "G4", "G4", "F4", "E4", "D4",
+                    "C4", "C4", "D4", "E4", "E4:1.5", "D4:0.5", "D4:2",
+                    "E4", "E4", "F4", "G4", "G4", "F4", "E4", "D4",
+                    "C4", "C4", "D4", "E4", "D4:1.5", "C4:0.5", "C4:2"
+                ], 140);
+            }
+            i = i + 1;
+        }
+
+        # White keys
+        i = 0;
+        while i < 8 {
+            if Inputs.key_pressed(keys[i]) {
+                Audio.play(piano[i]);
+                pressed_flash[i] = 8;
+            }
+            i = i + 1;
+        }
+
+        # Sharps
+        i = 0;
+        while i < 5 {
+            if Inputs.key_pressed(sharp_keys[i]) { Audio.play(sharps[i]); }
+            i = i + 1;
+        }
+
+        if Inputs.key_pressed("M") { Audio.play(tune); }
+
+        # Positional pop on click
+        if Inputs.mouse_pressed("left") {
+            Audio.play_at(pop, Inputs.mouse_x(), Inputs.mouse_y());
+        }
+
+        Mako2D.begin();
+        Mako2D.clear(Mako2D.color(16, 16, 24));
+
+        Mako2D.text("MAKO Music Maker", 20, 16, 26, Mako2D.GOLD);
+        Mako2D.text("A S D F G H J K = notes   W E T Y U = sharps   M = melody", 20, 52, 15, Mako2D.LIGHTGRAY);
+        Mako2D.text("1-5 = waveform   click = positional pop", 20, 72, 15, Mako2D.LIGHTGRAY);
+
+        # Waveform selector
+        i = 0;
+        while i < 5 {
+            col = Mako2D.DARKGRAY;
+            if i == wave_i { col = Mako2D.LIME; }
+            Mako2D.text("{i + 1}:{waves[i]}", 20 + i * 140, 104, 17, col);
+            i = i + 1;
+        }
+
+        # Piano keys
+        i = 0;
+        while i < 8 {
+            kx = 24 + i * 86;
+            col = Mako2D.WHITE;
+            if pressed_flash[i] > 0 {
+                col = Mako2D.GOLD;
+                pressed_flash[i] = pressed_flash[i] - 1;
+            }
+            Mako2D.rect_round(kx, 150, 78, 200, 0.15, 6, col);
+            Mako2D.text(labels[i], kx + 30, 310, 24, Mako2D.color(30, 30, 40));
+            Mako2D.text(keys[i], kx + 32, 160, 16, Mako2D.GRAY);
+            i = i + 1;
+        }
+
+        Mako2D.draw_fps(650, 16);
+        Mako2D.end();
+    }
+
+    Mako2D.close();
+}

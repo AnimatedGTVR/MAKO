@@ -1,0 +1,66 @@
+using Mako3D;
+using Inputs;
+using Audio;
+
+# 3D sound demo — three beeping beacons in space.
+# Fly around with WASD/arrows (Q/E up/down, middle mouse orbit, scroll zoom).
+# Each beacon's beep gets louder as you approach and pans left/right
+# depending on where it is relative to you.
+
+main() {
+    Mako3D.init(800, 600, "3D Sound");
+    Mako3D.fps(60);
+
+    cam = Mako3D.camera(12, 8, 12,  0, 0, 0);
+
+    # Three beacons with different voices
+    beep_a = Audio.tone("sine",     880, 0.15);   # high sine — red cube
+    beep_b = Audio.tone("square",   330, 0.15);   # low square — blue sphere
+    beep_c = Audio.tone("triangle", 550, 0.2);    # mid triangle — green cylinder
+
+    t = 0;
+    timer_a = 0;
+    timer_b = 0;
+    timer_c = 0;
+
+    while Mako3D.running() {
+        dt = Mako3D.delta();
+        t = t + dt;
+        Mako3D.update_camera(cam, 8);
+
+        pos = Mako3D.camera_pos(cam);
+        px = pos[0];
+        py = pos[1];
+        pz = pos[2];
+
+        ax = 0 - 8;   # red cube position on X
+
+        # Beep on independent timers
+        timer_a = timer_a + dt;
+        timer_b = timer_b + dt;
+        timer_c = timer_c + dt;
+        if timer_a > 0.8 { timer_a = 0; Audio.play_3d(beep_a, ax, 1, 0,   px, py, pz); }
+        if timer_b > 1.3 { timer_b = 0; Audio.play_3d(beep_b, 8, 1, 0,    px, py, pz); }
+        if timer_c > 2.0 { timer_c = 0; Audio.play_3d(beep_c, 0, 1, -8,   px, py, pz); }
+
+        Mako3D.begin();
+        Mako3D.clear(Mako3D.color(14, 14, 22));
+
+        Mako3D.begin_3d(cam);
+        Mako3D.grid(24, 1);
+
+        # Beacons (pulse size with their timers)
+        Mako3D.cube(ax, 1, 0,  1.6, 1.6, 1.6, Mako3D.RED);
+        Mako3D.sphere(8, 1, 0,  1.0, Mako3D.SKYBLUE);
+        Mako3D.cylinder(0, 0, -8,  0.7, 0.7, 2.2, Mako3D.LIME);
+
+        Mako3D.end_3d();
+
+        Mako3D.text("Fly toward a beacon — its beep gets louder and pans", 10, 10, 16, Mako3D.WHITE);
+        Mako3D.text("red cube: sine 880   blue sphere: square 330   green: triangle 550", 10, 32, 14, Mako3D.LIGHTGRAY);
+        Mako3D.draw_fps(10, 56);
+        Mako3D.end();
+    }
+
+    Mako3D.close();
+}

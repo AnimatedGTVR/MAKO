@@ -189,6 +189,181 @@ static class MakoAudio
         return (object?)(double)Raylib.GetMusicTimePlayed(m.Value);
     }
 
+    // ── Synth: generated tones ────────────────────────────────────────────────
+    //
+    // Waveform types: "sine" (soft), "square" (chippy), "saw" (buzzy),
+    //                 "triangle" (mellow), "noise" (percussion / effects)
+
+    private const int SampleRate = 44100;
+
+    /// tone(type, freq_hz, duration_s) → sound handle
+    public static object? Tone(List<object?> a)
+    {
+        EnsureDevice();
+        string type = a.Count > 0 ? a[0]?.ToString() ?? "sine" : "sine";
+        double freq = a.Count > 1 ? Convert.ToDouble(a[1]) : 440;
+        double dur  = a.Count > 2 ? Convert.ToDouble(a[2]) : 0.25;
+        return SoundFromSamples(Synth(type, freq, dur));
+    }
+
+    /// note(type, "C4", duration_s) → sound handle.  Names: C4, F#3, Bb5, A4=440.
+    public static object? Note(List<object?> a)
+    {
+        EnsureDevice();
+        string type = a.Count > 0 ? a[0]?.ToString() ?? "sine" : "sine";
+        string name = a.Count > 1 ? a[1]?.ToString() ?? "A4" : "A4";
+        double dur  = a.Count > 2 ? Convert.ToDouble(a[2]) : 0.25;
+        return SoundFromSamples(Synth(type, NoteFreq(name), dur));
+    }
+
+    /// melody(type, notes_list, bpm) → sound handle — bakes a whole tune into one clip.
+    /// Notes: "C4"  |  "C4:2" (2 beats)  |  "R" / "R:0.5" (rest)
+    public static object? Melody(List<object?> a)
+    {
+        EnsureDevice();
+        string type = a.Count > 0 ? a[0]?.ToString() ?? "sine" : "sine";
+        if (a.Count < 2 || a[1] is not List<object?> notes)
+            throw new MakoError("Audio.melody() expects (type, notes_list, bpm)");
+        double bpm  = a.Count > 2 ? Convert.ToDouble(a[2]) : 120;
+        double beat = 60.0 / bpm;
+
+        var song = new List<float>();
+        foreach (var item in notes)
+        {
+            var spec  = item?.ToString() ?? "R";
+            var parts = spec.Split(':');
+            double beats = parts.Length > 1 ? double.Parse(parts[1]) : 1;
+            double dur   = beats * beat;
+            if (parts[0].Equals("R", StringComparison.OrdinalIgnoreCase))
+                song.AddRange(new float[(int)(SampleRate * dur)]);      // rest = silence
+            else
+                song.AddRange(Synth(type, NoteFreq(parts[0]), dur));
+        }
+        return SoundFromSamples(song.ToArray());
+    }
+
+    private static float[] Synth(string type, double freq, double dur)
+    {
+        int n = Math.Max(1, (int)(SampleRate * dur));
+        var s = new float[n];
+        var rng = Random.Shared;
+        int attack  = Math.Min(n, SampleRate / 200);        // 5 ms fade-in
+        int release = Math.Min(n, (int)(n * 0.25));          // fade-out tail
+
+        for (int i = 0; i < n; i++)
+        {
+            double phase = freq * i / SampleRate;
+            double frac  = phase - Math.Floor(phase);
+            float v = type.ToLower() switch
+            {
+                "square"   => frac < 0.5 ? 0.7f : -0.7f,
+                "saw"      => (float)(2 * frac - 1) * 0.7f,
+                "triangle" => (float)(4 * Math.Abs(frac - 0.5) - 1) * 0.85f,
+                "noise"    => (float)(rng.NextDouble() * 2 - 1) * 0.6f,
+                _          => (float)Math.Sin(2 * Math.PI * phase) * 0.85f,   // sine
+            };
+            float env = 1f;
+            if (i < attack)       env = i / (float)attack;
+            if (i > n - release)  env = Math.Min(env, (n - i) / (float)release);
+            s[i] = v * env;
+        }
+        return s;
+    }
+
+    /// "C4" / "F#3" / "Bb5" → frequency (A4 = 440)
+    private static double NoteFreq(string name)
+    {
+        name = name.Trim();
+        if (name.Length < 2) throw new MakoError($"Audio: bad note name '{name}'");
+        int semis = char.ToUpper(name[0]) switch
+        {
+            'C' => 0, 'D' => 2, 'E' => 4, 'F' => 5, 'G' => 7, 'A' => 9, 'B' => 11,
+            _   => throw new MakoError($"Audio: bad note name '{name}'"),
+        };
+        int i = 1;
+        if (name[i] == '#') { semis++; i++; }
+        else if (name[i] == 'b') { semis--; i++; }
+        if (!int.TryParse(name[i..], out int octave))
+            throw new MakoError($"Audio: bad note name '{name}'");
+        int midi = 12 * (octave + 1) + semis;
+        return 440.0 * Math.Pow(2, (midi - 69) / 12.0);
+    }
+
+    private static object? SoundFromSamples(float[] samples)
+    {
+        var bytes = BuildWav(samples);
+        var wave  = Raylib.LoadWaveFromMemory(".wav", bytes);
+        _sounds.Add(Raylib.LoadSoundFromWave(wave));
+        Raylib.UnloadWave(wave);
+        return (object?)(double)(_sounds.Count - 1);
+    }
+
+    private static byte[] BuildWav(float[] samples, int rate = SampleRate)
+    {
+        int n = samples.Length;
+        using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms);
+        bw.Write("RIFF"u8.ToArray()); bw.Write(36 + n * 2); bw.Write("WAVE"u8.ToArray());
+        bw.Write("fmt "u8.ToArray()); bw.Write(16);
+        bw.Write((short)1); bw.Write((short)1);                 // PCM, mono
+        bw.Write(rate); bw.Write(rate * 2);
+        bw.Write((short)2); bw.Write((short)16);                // 16-bit
+        bw.Write("data"u8.ToArray()); bw.Write(n * 2);
+        foreach (var s in samples)
+            bw.Write((short)(Math.Clamp(s, -1f, 1f) * 32000));
+        return ms.ToArray();
+    }
+
+    // ── Positional sound ──────────────────────────────────────────────────────
+
+    /// play_at(handle, x, y) — 2D positional: pans and attenuates relative to
+    /// the centre of the window (the "listener").
+    public static object? PlayAt(List<object?> a)
+    {
+        var s = GetSound(a); if (s is null) return null;
+        double x = a.Count > 1 ? Convert.ToDouble(a[1]) : 0;
+        double y = a.Count > 2 ? Convert.ToDouble(a[2]) : 0;
+
+        double cx = Raylib.GetScreenWidth()  / 2.0;
+        double cy = Raylib.GetScreenHeight() / 2.0;
+        double half = Math.Max(cx, 1);
+
+        float pan  = (float)Math.Clamp(0.5 + (x - cx) / (half * 2), 0.05, 0.95);
+        double dist = Math.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+        double maxd = Math.Sqrt(cx * cx + cy * cy);
+        float vol  = (float)Math.Clamp(1.0 - 0.7 * (dist / Math.Max(maxd, 1)), 0.1, 1.0);
+
+        Raylib.SetSoundPan(s.Value, 1f - pan);   // raylib pan: 1 = left, 0 = right
+        Raylib.SetSoundVolume(s.Value, vol);
+        Raylib.PlaySound(s.Value);
+        return null;
+    }
+
+    /// play_3d(handle, sx, sy, sz,  lx, ly, lz) — 3D positional: volume falls
+    /// off with distance, panning from the listener-relative X offset.
+    public static object? Play3D(List<object?> a)
+    {
+        var s = GetSound(a); if (s is null) return null;
+        double sx = Cv(a, 1), sy = Cv(a, 2), sz = Cv(a, 3);
+        double lx = Cv(a, 4), ly = Cv(a, 5), lz = Cv(a, 6);
+
+        double dx = sx - lx, dy = sy - ly, dz = sz - lz;
+        double dist = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+
+        float vol = (float)Math.Clamp(1.0 / (1.0 + 0.15 * dist), 0.02, 1.0);
+        float pan = dist > 0.001
+            ? (float)Math.Clamp(0.5 + 0.5 * (dx / dist), 0.05, 0.95)
+            : 0.5f;
+
+        Raylib.SetSoundPan(s.Value, 1f - pan);
+        Raylib.SetSoundVolume(s.Value, vol);
+        Raylib.PlaySound(s.Value);
+        return null;
+    }
+
+    private static double Cv(List<object?> a, int i) =>
+        a.Count > i ? Convert.ToDouble(a[i]) : 0;
+
     // ── Global ────────────────────────────────────────────────────────────────
 
     /// master_volume(0.0–1.0)
@@ -249,5 +424,12 @@ static class MakoAudio
         ["music_length"]  = MusicLength,
         ["music_pos"]     = MusicPos,
         ["master_volume"] = MasterVolume,
+        // Synth / music maker
+        ["tone"]          = Tone,
+        ["note"]          = Note,
+        ["melody"]        = Melody,
+        // Positional
+        ["play_at"]       = PlayAt,
+        ["play_3d"]       = Play3D,
     };
 }
