@@ -1,0 +1,128 @@
+script "MakoUI Demo";
+using MakoUI;
+
+main() {
+    MakoUI.init("MakoUI Demo", 1000, 700);
+    MakoUI.theme_mako();
+
+    count    = 0;
+    speed    = 1.0;
+    name     = "world";
+    selected = 0;
+    fruits   = ["Apple", "Banana", "Cherry", "Dragonfruit"];
+    show_modal = false;
+
+    while MakoUI.running() {
+        MakoUI.begin();
+
+        # ── Main menu bar ──────────────────────────────────────────────────
+        if MakoUI.begin_main_menu_bar() {
+            if MakoUI.begin_menu("File") {
+                if MakoUI.menu_item("Reset counter", "Ctrl+R") { count = 0; }
+                MakoUI.menu_item("Quit", "Ctrl+Q");
+                MakoUI.end_menu();
+            }
+            if MakoUI.begin_menu("Theme") {
+                if MakoUI.menu_item("MAKO (cherry blossom)") { MakoUI.theme_mako(); }
+                if MakoUI.menu_item("Dark") { MakoUI.theme_dark(); }
+                if MakoUI.menu_item("Light") { MakoUI.theme_light(); }
+                MakoUI.end_menu();
+            }
+            MakoUI.end_main_menu_bar();
+        }
+
+        # ── Counter window ─────────────────────────────────────────────────
+        MakoUI.set_window_size(320, 200);
+        MakoUI.set_window_pos(20, 40);
+        MakoUI.begin_window("Counter");
+
+        MakoUI.text("Count: {count}");
+        MakoUI.progress(count / 100.0, "{count}/100");
+        MakoUI.separator();
+
+        if MakoUI.button("Increment") { count = count + 1; }
+        MakoUI.tooltip("Add 1 to the counter");
+        MakoUI.same_line();
+        if MakoUI.button("Decrement") { count = count - 1; }
+        MakoUI.same_line();
+        if MakoUI.small_button("Reset") { count = 0; }
+
+        MakoUI.spacing();
+        count = MakoUI.drag_int("Drag count", count, speed);
+
+        MakoUI.end_window();
+
+        # ── Input window ───────────────────────────────────────────────────
+        MakoUI.set_window_size(320, 180);
+        MakoUI.set_window_pos(20, 260);
+        MakoUI.begin_window("Inputs");
+
+        name     = MakoUI.input_text("Name", name);
+        selected = MakoUI.combo("Fruit", selected, fruits);
+        speed    = MakoUI.drag("Drag speed", speed, 0.05);
+
+        MakoUI.spacing();
+        MakoUI.text("Hello, {name}! You picked: {fruits[selected]}");
+
+        MakoUI.end_window();
+
+        # ── Table window ───────────────────────────────────────────────────
+        MakoUI.set_window_size(360, 220);
+        MakoUI.set_window_pos(360, 40);
+        MakoUI.begin_window("Fruit Table");
+
+        if MakoUI.begin_table("fruits", 3) {
+            MakoUI.table_column("Name");
+            MakoUI.table_column("Length");
+            MakoUI.table_column("Selected?");
+            MakoUI.table_header_row();
+
+            i = 0;
+            while i < len(fruits) {
+                MakoUI.table_next_row();
+                MakoUI.table_next_col();
+                MakoUI.text(fruits[i]);
+                MakoUI.table_next_col();
+                MakoUI.text(to_str(len(fruits[i])));
+                MakoUI.table_next_col();
+                if i == selected {
+                    MakoUI.text("yes");
+                } else {
+                    MakoUI.text("-");
+                }
+                i = i + 1;
+            }
+            MakoUI.end_table();
+        }
+
+        MakoUI.end_window();
+
+        # ── Modal demo window ──────────────────────────────────────────────
+        MakoUI.set_window_size(300, 100);
+        MakoUI.set_window_pos(360, 280);
+        MakoUI.begin_window("Popup Demo");
+
+        if MakoUI.button("Open Modal") {
+            MakoUI.open_popup("Confirm");
+        }
+
+        if MakoUI.begin_modal("Confirm") {
+            MakoUI.text("Are you sure you want to reset?");
+            MakoUI.spacing();
+            if MakoUI.button("Yes") {
+                count = 0;
+                MakoUI.close_popup();
+            }
+            MakoUI.same_line();
+            if MakoUI.button("Cancel") {
+                MakoUI.close_popup();
+            }
+            MakoUI.end_popup();
+        }
+
+        MakoUI.text("FPS: {to_str(round(MakoUI.framerate()))}");
+        MakoUI.end_window();
+
+        MakoUI.end();
+    }
+}

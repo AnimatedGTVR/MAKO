@@ -374,16 +374,38 @@ class Interpreter
         "len", "upper", "lower", "trim", "contains", "starts_with", "ends_with",
         "replace", "split", "join",
         "push", "pop", "first", "last", "reverse", "has",
-        // MakoUI
+        // MakoUI — lifecycle
         "MakoUI.init", "MakoUI.running", "MakoUI.begin", "MakoUI.end",
-        "MakoUI.begin_window", "MakoUI.end_window",
+        // MakoUI — windows
+        "MakoUI.begin_window", "MakoUI.end_window", "MakoUI.begin_window_menu",
+        // MakoUI — widgets
         "MakoUI.text", "MakoUI.text_colored", "MakoUI.button", "MakoUI.small_button",
         "MakoUI.checkbox", "MakoUI.slider", "MakoUI.slider_int",
-        "MakoUI.input_text", "MakoUI.input_number",
-        "MakoUI.separator", "MakoUI.same_line", "MakoUI.spacing", "MakoUI.new_line",
+        "MakoUI.drag", "MakoUI.drag_int",
+        "MakoUI.input_text", "MakoUI.input_number", "MakoUI.input_text_multi",
+        "MakoUI.combo",
         "MakoUI.collapsing", "MakoUI.progress",
+        // MakoUI — layout
+        "MakoUI.separator", "MakoUI.same_line", "MakoUI.spacing", "MakoUI.new_line",
         "MakoUI.set_window_size", "MakoUI.set_window_pos",
+        // MakoUI — menus
+        "MakoUI.begin_menu_bar", "MakoUI.end_menu_bar",
+        "MakoUI.begin_main_menu_bar", "MakoUI.end_main_menu_bar",
+        "MakoUI.begin_menu", "MakoUI.end_menu", "MakoUI.menu_item",
+        // MakoUI — popups
+        "MakoUI.open_popup", "MakoUI.begin_popup", "MakoUI.begin_modal",
+        "MakoUI.close_popup", "MakoUI.end_popup",
+        // MakoUI — tables
+        "MakoUI.begin_table", "MakoUI.table_column", "MakoUI.table_header_row",
+        "MakoUI.table_next_row", "MakoUI.table_next_col", "MakoUI.end_table",
+        // MakoUI — tooltips
+        "MakoUI.tooltip", "MakoUI.set_tooltip",
+        // MakoUI — query
+        "MakoUI.is_hovered", "MakoUI.is_clicked", "MakoUI.is_key_pressed",
+        "MakoUI.get_time", "MakoUI.framerate",
+        // MakoUI — style & themes
         "MakoUI.push_color", "MakoUI.pop_color", "MakoUI.push_var", "MakoUI.pop_var",
+        "MakoUI.theme_dark", "MakoUI.theme_light", "MakoUI.theme_mako",
     ];
 
     private bool TryBuiltin(string name, List<object?> args, out object? result)
@@ -662,6 +684,128 @@ class Interpreter
                 _ui!.PopStyleVar(args.Count == 1 ? (int)AsNum(name, args[0]) : 1);
                 result = null; return true;
 
+            // ── Themes ────────────────────────────────────────────────────────
+            case "MakoUI.theme_dark":
+                EnsureUI(name); _ui!.ThemeDark(); result = null; return true;
+            case "MakoUI.theme_light":
+                EnsureUI(name); _ui!.ThemeLight(); result = null; return true;
+            case "MakoUI.theme_mako":
+                EnsureUI(name); _ui!.ThemeMako(); result = null; return true;
+
+            // ── Menus ─────────────────────────────────────────────────────────
+            case "MakoUI.begin_menu_bar":
+                EnsureUI(name); result = (object?)_ui!.BeginMenuBar(); return true;
+            case "MakoUI.end_menu_bar":
+                EnsureUI(name); _ui!.EndMenuBar(); result = null; return true;
+            case "MakoUI.begin_main_menu_bar":
+                EnsureUI(name); result = (object?)_ui!.BeginMainMenuBar(); return true;
+            case "MakoUI.end_main_menu_bar":
+                EnsureUI(name); _ui!.EndMainMenuBar(); result = null; return true;
+            case "MakoUI.begin_menu":
+                if (args.Count != 1) throw new MakoError("MakoUI.begin_menu() expects 1 argument");
+                EnsureUI(name); result = (object?)_ui!.BeginMenu(AsStr(name, args[0])); return true;
+            case "MakoUI.end_menu":
+                EnsureUI(name); _ui!.EndMenu(); result = null; return true;
+            case "MakoUI.menu_item":
+                if (args.Count < 1 || args.Count > 2) throw new MakoError("MakoUI.menu_item() expects 1 or 2 arguments");
+                EnsureUI(name);
+                result = (object?)(args.Count == 2
+                    ? _ui!.MenuItem(AsStr(name, args[0]), AsStr(name, args[1]))
+                    : _ui!.MenuItem(AsStr(name, args[0])));
+                return true;
+
+            // ── Popups ────────────────────────────────────────────────────────
+            case "MakoUI.open_popup":
+                if (args.Count != 1) throw new MakoError("MakoUI.open_popup() expects 1 argument");
+                EnsureUI(name); _ui!.OpenPopup(AsStr(name, args[0])); result = null; return true;
+            case "MakoUI.begin_popup":
+                if (args.Count != 1) throw new MakoError("MakoUI.begin_popup() expects 1 argument");
+                EnsureUI(name); result = (object?)_ui!.BeginPopup(AsStr(name, args[0])); return true;
+            case "MakoUI.begin_modal":
+                if (args.Count != 1) throw new MakoError("MakoUI.begin_modal() expects 1 argument");
+                EnsureUI(name); result = (object?)_ui!.BeginModal(AsStr(name, args[0])); return true;
+            case "MakoUI.close_popup":
+                EnsureUI(name); _ui!.ClosePopup(); result = null; return true;
+            case "MakoUI.end_popup":
+                EnsureUI(name); _ui!.EndPopup(); result = null; return true;
+
+            // ── Tables ────────────────────────────────────────────────────────
+            case "MakoUI.begin_table":
+                if (args.Count < 2 || args.Count > 4) throw new MakoError("MakoUI.begin_table() expects 2-4 arguments");
+                EnsureUI(name);
+                result = (object?)(args.Count == 2
+                    ? _ui!.BeginTable(AsStr(name, args[0]), (int)AsNum(name, args[1]))
+                    : _ui!.BeginTable(AsStr(name, args[0]), (int)AsNum(name, args[1]),
+                                      AsBool(args[2]), args.Count > 3 && AsBool(args[3])));
+                return true;
+            case "MakoUI.table_column":
+                if (args.Count != 1) throw new MakoError("MakoUI.table_column() expects 1 argument");
+                EnsureUI(name); _ui!.TableColumn(AsStr(name, args[0])); result = null; return true;
+            case "MakoUI.table_header_row":
+                EnsureUI(name); _ui!.TableHeaderRow(); result = null; return true;
+            case "MakoUI.table_next_row":
+                EnsureUI(name); _ui!.TableNextRow(); result = null; return true;
+            case "MakoUI.table_next_col":
+                EnsureUI(name); _ui!.TableNextCol(); result = null; return true;
+            case "MakoUI.end_table":
+                EnsureUI(name); _ui!.EndTable(); result = null; return true;
+
+            // ── Drag ──────────────────────────────────────────────────────────
+            case "MakoUI.drag":
+                if (args.Count < 2 || args.Count > 3) throw new MakoError("MakoUI.drag() expects 2 or 3 arguments");
+                EnsureUI(name);
+                result = _ui!.Drag(AsStr(name, args[0]), AsNum(name, args[1]),
+                                   args.Count > 2 ? AsNum(name, args[2]) : 1.0);
+                return true;
+            case "MakoUI.drag_int":
+                if (args.Count < 2 || args.Count > 3) throw new MakoError("MakoUI.drag_int() expects 2 or 3 arguments");
+                EnsureUI(name);
+                result = _ui!.DragInt(AsStr(name, args[0]), AsNum(name, args[1]),
+                                      args.Count > 2 ? AsNum(name, args[2]) : 1.0);
+                return true;
+
+            // ── Tooltips ─────────────────────────────────────────────────────
+            case "MakoUI.tooltip":
+                if (args.Count != 1) throw new MakoError("MakoUI.tooltip() expects 1 argument");
+                EnsureUI(name); _ui!.Tooltip(AsStr(name, args[0])); result = null; return true;
+            case "MakoUI.set_tooltip":
+                if (args.Count != 1) throw new MakoError("MakoUI.set_tooltip() expects 1 argument");
+                EnsureUI(name); _ui!.SetTooltip(AsStr(name, args[0])); result = null; return true;
+
+            // ── Combo ─────────────────────────────────────────────────────────
+            case "MakoUI.combo":
+                if (args.Count != 3) throw new MakoError("MakoUI.combo() expects 3 arguments (label, index, list)");
+                EnsureUI(name);
+                result = (double)_ui!.Combo(AsStr(name, args[0]), (int)AsNum(name, args[1]),
+                                             AsList(name, args[2]));
+                return true;
+
+            // ── Text variants ─────────────────────────────────────────────────
+            case "MakoUI.input_text_multi":
+                if (args.Count < 2 || args.Count > 3) throw new MakoError("MakoUI.input_text_multi() expects 2 or 3 arguments");
+                EnsureUI(name);
+                result = _ui!.InputTextMulti(AsStr(name, args[0]), AsStr(name, args[1]),
+                                              args.Count > 2 ? (int)AsNum(name, args[2]) : 6);
+                return true;
+
+            // ── Window variants ───────────────────────────────────────────────
+            case "MakoUI.begin_window_menu":
+                if (args.Count != 1) throw new MakoError("MakoUI.begin_window_menu() expects 1 argument");
+                EnsureUI(name); result = (object?)_ui!.BeginWindowMenuBar(AsStr(name, args[0])); return true;
+
+            // ── Query ─────────────────────────────────────────────────────────
+            case "MakoUI.is_hovered":
+                EnsureUI(name); result = (object?)_ui!.IsItemHovered(); return true;
+            case "MakoUI.is_clicked":
+                EnsureUI(name); result = (object?)_ui!.IsItemClicked(); return true;
+            case "MakoUI.is_key_pressed":
+                if (args.Count != 1) throw new MakoError("MakoUI.is_key_pressed() expects 1 argument");
+                EnsureUI(name); result = (object?)_ui!.IsKeyPressed((int)AsNum(name, args[0])); return true;
+            case "MakoUI.get_time":
+                EnsureUI(name); result = _ui!.GetTime(); return true;
+            case "MakoUI.framerate":
+                EnsureUI(name); result = _ui!.GetFramerate(); return true;
+
             default:
                 return false;
         }
@@ -682,6 +826,7 @@ class Interpreter
 
     private static string       AsStr(string fn, object? v) =>
         v is string s ? s : throw new MakoError($"{fn}() expects a string, got {TypeName(v)} '{Short(v)}'");
+    private static bool AsBool(object? v) => Truthy(v);
     private static List<object?> AsList(string fn, object? v) =>
         v is List<object?> l ? l : throw new MakoError($"{fn}() expects a list, got {TypeName(v)} '{Short(v)}'");
     private static double AsNum(string fn, object? v)
