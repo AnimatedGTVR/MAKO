@@ -22,6 +22,8 @@ enum TokenType
     And, Or, Not,
     Const,
     Using, Use, From,
+    Try, Catch,
+    Arrow,   // =>
 
     // Operators
     Assign,   // =

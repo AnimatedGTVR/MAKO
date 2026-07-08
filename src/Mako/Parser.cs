@@ -186,11 +186,12 @@ class Parser
             TokenType.Continue   => ParseContinue(),
             TokenType.Return     => ParseReturn(),
             TokenType.Run        => ParseRun(),
+            TokenType.Try        => ParseTry(),
             TokenType.Identifier => ParseAssignOrCall(),
             TokenType.Else => throw new MakoError(
                 "found 'else' without a matching 'if'", tok.Line, tok.Col, 4),
             TokenType.Fn => throw new MakoError(
-                "functions must be declared at top level, outside 'main' and other functions",
+                "functions must be declared at top level, outside 'main' and other functions — use 'fn(x) => ...' for inline lambdas",
                 tok.Line, tok.Col, 2),
             _ => throw new MakoError(
                 $"unexpected {DescribeToken(tok)} — not a valid statement start",
@@ -375,6 +376,25 @@ class Parser
         return new RunStmt(cmd);
     }
 
+    private TryStmt ParseTry()
+    {
+        Advance(); // try
+        var tryBody = ParseBlock();
+
+        string? catchVar = null;
+        var catchBody = new List<Statement>();
+
+        if (Check(TokenType.Catch))
+        {
+            Advance(); // catch
+            if (Check(TokenType.Identifier))
+                catchVar = Advance().Value;
+            catchBody = ParseBlock();
+        }
+
+        return new TryStmt(tryBody, catchVar, catchBody);
+    }
+
     // ── Expressions ───────────────────────────────────────────────────────────
 
     private Expr ParseExpr() => ParseLogical();
@@ -511,6 +531,33 @@ class Parser
             }
             ExpectClosing(TokenType.RBrace, "}", openBr);
             return new DictLit(entries) { Line = openBr.Line, Col = openBr.Col };
+        }
+
+        // Lambda: fn(x) => expr   OR   fn(x, y) { ... }
+        if (Check(TokenType.Fn))
+        {
+            var fnTok = Advance(); // fn
+            var open  = Expect(TokenType.LParen, "expected '(' after 'fn' in lambda");
+            var parms = new List<string>();
+            while (!Check(TokenType.RParen) && !Check(TokenType.Eof))
+            {
+                parms.Add(Expect(TokenType.Identifier, "expected a parameter name").Value);
+                if (Check(TokenType.Comma)) Advance();
+            }
+            ExpectClosing(TokenType.RParen, ")", open);
+
+            List<Statement> body;
+            if (Check(TokenType.Arrow))
+            {
+                Advance(); // =>
+                var expr = ParseExpr();
+                body = [new ReturnStmt(expr) { Line = expr.Line, Col = expr.Col }];
+            }
+            else
+            {
+                body = ParseBlock();
+            }
+            return new LambdaExpr(parms, body) { Line = fnTok.Line, Col = fnTok.Col };
         }
 
         if (Check(TokenType.Input))
@@ -720,7 +767,8 @@ class Parser
     {
         TokenType.Print or TokenType.Printnl or TokenType.If   or TokenType.While or
         TokenType.For   or TokenType.Fn      or TokenType.Return or TokenType.Break or
-        TokenType.Continue or TokenType.Run  or TokenType.Const or TokenType.Identifier
+        TokenType.Continue or TokenType.Run  or TokenType.Const or
+        TokenType.Try      or TokenType.Identifier
             => $"start of '{tok.Value}' statement",
         TokenType.RBrace => "end of block '}'",
         TokenType.Eof    => "end of file",

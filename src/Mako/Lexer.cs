@@ -37,6 +37,8 @@ class Lexer
         ["using"]     = TokenType.Using,
         ["use"]       = TokenType.Use,
         ["from"]      = TokenType.From,
+        ["try"]       = TokenType.Try,
+        ["catch"]     = TokenType.Catch,
         ["true"]      = TokenType.True,
         ["false"]     = TokenType.False,
         ["none"]      = TokenType.None,
@@ -113,6 +115,7 @@ class Lexer
         if (char.IsLetter(c) || c == '_') return ReadIdentifier(line, col);
 
         char next = Peek(1);
+        if (c == '=' && next == '>') { _pos += 2; return Tok(TokenType.Arrow,   "=>", line, col); }
         if (c == '=' && next == '=') { _pos += 2; return Tok(TokenType.EqEq,    "==", line, col); }
         if (c == '!' && next == '=') { _pos += 2; return Tok(TokenType.NotEq,   "!=", line, col); }
         if (c == '<' && next == '=') { _pos += 2; return Tok(TokenType.LtEq,    "<=", line, col); }

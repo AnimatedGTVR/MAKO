@@ -5,6 +5,15 @@ file sealed class ReturnSignal(object? value) : Exception { public object? Value
 file sealed class BreakSignal()    : Exception;
 file sealed class ContinueSignal() : Exception;
 
+/// A first-class lambda / closure value.
+sealed class MakoFn(List<string> parms, List<Statement> body, Dictionary<string, object?> captured)
+{
+    public List<string>             Params   { get; } = parms;
+    public List<Statement>          Body     { get; } = body;
+    public Dictionary<string,object?> Captured { get; } = captured;
+    public override string ToString() => $"fn({string.Join(", ", Params)})"  ;
+}
+
 /// Tree-walk interpreter.
 /// Runtime value types:  string | double | bool | List<object?> | null
 class Interpreter
@@ -246,6 +255,30 @@ class Interpreter
                 RunShellCommand(Stringify(Eval(r.Command)));
                 break;
 
+            case TryStmt ts:
+                try
+                {
+                    PushScope();
+                    try   { foreach (var s in ts.Try) RunStatement(s); }
+                    finally { PopScope(); }
+                }
+                catch (MakoError e) when (ts.Catch.Count > 0)
+                {
+                    PushScope();
+                    if (ts.CatchVar != null) SetVar(ts.CatchVar, e.RawMessage);
+                    try   { foreach (var s in ts.Catch) RunStatement(s); }
+                    finally { PopScope(); }
+                }
+                catch (Exception e) when (e is not (ReturnSignal or BreakSignal or ContinueSignal)
+                                              && ts.Catch.Count > 0)
+                {
+                    PushScope();
+                    if (ts.CatchVar != null) SetVar(ts.CatchVar, e.Message);
+                    try   { foreach (var s in ts.Catch) RunStatement(s); }
+                    finally { PopScope(); }
+                }
+                break;
+
             case ExprStmt e:
                 Eval(e.Value);
                 break;
@@ -285,6 +318,7 @@ class Interpreter
         NullLit              => null,
         ListLit l            => l.Items.ConvertAll(Eval),
         DictLit d            => EvalDict(d),
+        LambdaExpr lam       => EvalLambda(lam),
         IdentExpr id         => GetVar(id.Name),
         IndexExpr ix         => EvalIndex(ix),
         InputExpr inp        => ReadInput(Stringify(Eval(inp.Prompt))),
@@ -302,6 +336,44 @@ class Interpreter
         foreach (var (keyExpr, valExpr) in d.Entries)
             result[Stringify(Eval(keyExpr))] = Eval(valExpr);
         return result;
+    }
+
+    private MakoFn EvalLambda(LambdaExpr lam)
+    {
+        // Capture the current scope's variables at the point of creation.
+        var captured = new Dictionary<string, object?>();
+        foreach (var scope in _scopes)
+            foreach (var (k, v) in scope.Vars)
+                captured[k] = v;
+        return new MakoFn(lam.Params, lam.Body, captured);
+    }
+
+    private object? CallLambda(MakoFn fn, List<object?> args)
+    {
+        if (args.Count != fn.Params.Count)
+            throw new MakoError($"lambda expects {fn.Params.Count} argument(s), got {args.Count}");
+
+        PushScope();
+        // Inject captured variables first, then params (params shadow captures).
+        foreach (var (k, v) in fn.Captured)
+            _scopes[^1].Vars[k] = v;
+        for (int i = 0; i < fn.Params.Count; i++)
+            _scopes[^1].Vars[fn.Params[i]] = args[i];
+
+        try
+        {
+            foreach (var stmt in fn.Body) RunStatement(stmt);
+            return null;
+        }
+        catch (ReturnSignal r) { return r.Value; }
+        finally { PopScope(); }
+    }
+
+    /// Call any callable value — MakoFn lambda or named function.
+    private object? CallValue(string context, object? callee, List<object?> args)
+    {
+        if (callee is MakoFn fn) return CallLambda(fn, args);
+        throw new MakoError($"{context}: expected a function, got {TypeName(callee)}");
     }
 
     private object? EvalIndex(IndexExpr ix)
@@ -405,6 +477,10 @@ class Interpreter
 
         if (!_funcs.TryGetValue(name, out var fn))
         {
+            // Check if it's a variable holding a lambda.
+            if (TryGetVar(name, out var maybeVar) && maybeVar is MakoFn lambda)
+                return CallLambda(lambda, args);
+
             var suggestion = Suggest.Closest(name, _funcs.Keys.Concat(BuiltinNames));
             throw new MakoError($"function '{name}' wasn't found")
             {
@@ -442,6 +518,8 @@ class Interpreter
         "push", "pop", "first", "last", "reverse", "has",
         // Dict builtins
         "keys", "values", "remove", "merge", "get",
+        // Higher-order functions
+        "map", "filter", "reduce", "sort_by", "each", "any", "all",
         // I/O & system stdlib
         "read", "write", "append", "exists", "delete", "lines",
         "time", "random", "random_int", "sleep", "env",
@@ -601,6 +679,68 @@ class Interpreter
                     result = (object?)hasDct.ContainsKey(Stringify(args[1]));
                 else
                     result = (object?)AsList(name, args[0]).Any(v => ValuesEqual(v, args[1]));
+                return true;
+
+            // ── Higher-order list functions ───────────────────────────────────
+            case "map":
+                RequireArity(name, args, 2);
+                result = AsList(name, args[0])
+                    .Select(item => CallValue("map", args[1], [item]))
+                    .ToList();
+                return true;
+
+            case "filter":
+                RequireArity(name, args, 2);
+                result = AsList(name, args[0])
+                    .Where(item => Truthy(CallValue("filter", args[1], [item])))
+                    .ToList();
+                return true;
+
+            case "reduce":
+                RequireArity(name, args, 3);
+                var reduceList = AsList(name, args[0]);
+                var acc = args[2];
+                foreach (var item in reduceList)
+                    acc = CallValue("reduce", args[1], [acc, item]);
+                result = acc; return true;
+
+            case "sort_by":
+                if (args.Count < 1 || args.Count > 2)
+                    throw new MakoError("sort_by() expects 1 or 2 arguments (list [, key_fn])");
+                var sortList = new List<object?>(AsList(name, args[0]));
+                if (args.Count == 2)
+                    sortList.Sort((a, b) =>
+                    {
+                        var ka = CallValue("sort_by", args[1], [a]);
+                        var kb = CallValue("sort_by", args[1], [b]);
+                        return Comparer<object?>.Create((x, y) =>
+                        {
+                            if (x is double dx && y is double dy) return dx.CompareTo(dy);
+                            return string.Compare(Stringify(x), Stringify(y), StringComparison.Ordinal);
+                        }).Compare(ka, kb);
+                    });
+                else
+                    sortList.Sort((a, b) =>
+                    {
+                        if (a is double da && b is double db) return da.CompareTo(db);
+                        return string.Compare(Stringify(a), Stringify(b), StringComparison.Ordinal);
+                    });
+                result = sortList; return true;
+
+            case "each":
+                RequireArity(name, args, 2);
+                foreach (var item in AsList(name, args[0]))
+                    CallValue("each", args[1], [item]);
+                result = null; return true;
+
+            case "any":
+                RequireArity(name, args, 2);
+                result = (object?)AsList(name, args[0]).Any(item => Truthy(CallValue("any", args[1], [item])));
+                return true;
+
+            case "all":
+                RequireArity(name, args, 2);
+                result = (object?)AsList(name, args[0]).All(item => Truthy(CallValue("all", args[1], [item])));
                 return true;
 
             // ── Dict builtins ─────────────────────────────────────────────────
@@ -1024,6 +1164,14 @@ class Interpreter
     private void PushScope() => _scopes.Add(new Scope());
     private void PopScope()  => _scopes.RemoveAt(_scopes.Count - 1);
 
+    private bool TryGetVar(string name, out object? value)
+    {
+        for (int i = _scopes.Count - 1; i >= 0; i--)
+            if (_scopes[i].Vars.TryGetValue(name, out value)) return true;
+        value = null;
+        return false;
+    }
+
     private object? GetVar(string name)
     {
         for (int i = _scopes.Count - 1; i >= 0; i--)
@@ -1132,6 +1280,7 @@ class Interpreter
         string                        => "string",
         List<object?>                 => "list",
         Dictionary<string, object?>   => "dict",
+        MakoFn                        => "fn",
         _                             => "unknown",
     };
 
@@ -1146,6 +1295,7 @@ class Interpreter
         List<object?> l => "[" + string.Join(", ", l.Select(Stringify)) + "]",
         Dictionary<string, object?> d =>
             "{" + string.Join(", ", d.Select(kv => $"\"{kv.Key}\": {StringifyValue(kv.Value)}")) + "}",
+        MakoFn f      => f.ToString(),
         _             => val.ToString() ?? "none",
     };
 

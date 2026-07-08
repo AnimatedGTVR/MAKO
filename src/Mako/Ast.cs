@@ -67,6 +67,9 @@ record RunStmt(Expr Command) : Statement;
 /// const name = expr;   (immutable binding)
 record ConstStmt(string Name, Expr Value) : Statement;
 
+/// try { ... } catch err { ... }   (CatchVar may be null)
+record TryStmt(List<Statement> Try, string? CatchVar, List<Statement> Catch) : Statement;
+
 /// A bare expression used as a statement (e.g. a function call).
 record ExprStmt(Expr Value) : Statement;
 
@@ -121,3 +124,6 @@ record CallExpr(string Name, List<Expr> Args) : Expr;
 
 /// Namespace.func(arg, ...)
 record NamespacedCallExpr(string Ns, string Func, List<Expr> Args) : Expr;
+
+/// fn(x) => expr   OR   fn(x) { ... }
+record LambdaExpr(List<string> Params, List<Statement> Body) : Expr;
