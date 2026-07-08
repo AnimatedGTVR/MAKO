@@ -39,8 +39,23 @@ case "$cmd" in
         mkdir -p "$OUT"
         cd "$SRC"
         dotnet publish -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o "$OUT"
+
+        # Install native libs and binary to ~/.local/share/mko/bin/
+        MKO_BIN="$HOME/.local/share/mko/bin"
+        mkdir -p "$MKO_BIN"
+        cp "$OUT/mko" "$MKO_BIN/mko.bin"
+        # Copy all native .so files
+        cp "$OUT"/*.so*        "$MKO_BIN/" 2>/dev/null || true
+        cp "$OUT"/runtimes/linux-x64/native/*.so* "$MKO_BIN/" 2>/dev/null || true
+        chmod +x "$MKO_BIN/mko.bin"
+
+        # Install a thin wrapper to ~/.local/bin that sets LD_LIBRARY_PATH
         mkdir -p ~/.local/bin
-        cp "$OUT/mko" ~/.local/bin/mko
+        cat > ~/.local/bin/mko << 'WRAPPER'
+#!/usr/bin/env bash
+MKO_BIN="$HOME/.local/share/mko/bin"
+exec env LD_LIBRARY_PATH="$MKO_BIN${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$MKO_BIN/mko.bin" "$@"
+WRAPPER
         chmod +x ~/.local/bin/mko
         echo "Installed: ~/.local/bin/mko"
 

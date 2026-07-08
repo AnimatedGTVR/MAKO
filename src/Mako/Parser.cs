@@ -234,14 +234,16 @@ class Parser
         var nameTok = Advance(); // identifier
         var name    = nameTok.Value;
 
-        // Namespaced call: Ns.func(args);
+        // Namespaced call or variable: Ns.func(args)  /  Ns.CONSTANT
         if (Check(TokenType.Dot))
         {
             Advance(); // .
             var fnName = Expect(TokenType.Identifier, $"expected a function name after '{name}.'").Value;
-            var call = ParseNamespacedCallTail(nameTok, fnName);
-            Expect(TokenType.Semicolon, "function call");
-            return new ExprStmt(call);
+            Expr nsExpr = Check(TokenType.LParen)
+                ? ParseNamespacedCallTail(nameTok, fnName)
+                : new IdentExpr($"{name}.{fnName}") { Line = nameTok.Line, Col = nameTok.Col };
+            Expect(TokenType.Semicolon, "expression");
+            return new ExprStmt(nsExpr);
         }
 
         // Bare function call: name(args);
@@ -584,7 +586,10 @@ class Parser
             {
                 Advance(); // .
                 var fnName = Expect(TokenType.Identifier, $"expected a function name after '{tok.Value}.'").Value;
-                return ParseNamespacedCallTail(tok, fnName);
+                // If followed by '(' it's a call; otherwise it's a namespaced variable (e.g. MakoRay.BLACK).
+                if (Check(TokenType.LParen))
+                    return ParseNamespacedCallTail(tok, fnName);
+                return new IdentExpr($"{tok.Value}.{fnName}") { Line = tok.Line, Col = tok.Col };
             }
             if (Check(TokenType.LParen))
                 return ParseCallTail(tok);
