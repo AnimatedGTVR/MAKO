@@ -98,11 +98,13 @@ while Mako3D.running() {
 | `set_object_rotation(h, degrees)` | Rotate around the Y axis (v1 — Y-axis only) |
 | `set_object_visible(h, bool)` | Hide/show without removing |
 | `set_object_wires(h, bool)` | Toggle the black wireframe outline |
+| `set_object_name(h, name)` | Label it — purely cosmetic, doesn't need to be unique |
+| `find_object(name)` | → the handle of the first object with this exact name, or `none` |
 | `remove_object(h)` | Remove permanently |
 | `clear_objects()` | Remove everything |
 | `object_count()` | How many are currently registered |
 | `object_bounds(h)` | `[min_x,min_y,min_z, max_x,max_y,max_z]` — an axis-aligned box for collision, or `none` if removed |
-| `object_info(h)` | Dict with `shape,x,y,z,sx,sy,sz,rotation,color,visible,wires` — the read side of `set_object_*()`, or `none` if removed |
+| `object_info(h)` | Dict with `shape,name,x,y,z,sx,sy,sz,rotation,color,visible,wires` — the read side of `set_object_*()`, or `none` if removed |
 | `draw_scene()` | Draw every visible spawned object — call between `begin_3d()`/`end_3d()` |
 | `save_scene(path="scene.json")` | Write every spawned object to a JSON file |
 | `load_scene(path)` | Clear the scene and respawn everything from a saved file |
@@ -170,6 +172,51 @@ pattern with MakoUI.
 
 See `examples/scene_demo.mko` for a scene with dozens of objects, a
 rotating handle-driven pillar, runtime removal, and click-to-select.
+
+### Mesh edit mode (vertices, edges, faces)
+
+Object Mode above selects a whole object. This is the Blender-style step
+inside it — look at (and select) the object's actual geometry, generated
+fresh from its current shape and scale:
+
+```mako
+info = Mako3D.mesh_info(handle);      # {vertex_count, edge_count, face_count}
+verts = Mako3D.mesh_vertices(handle); # [[x,y,z], ...] — world space
+edges = Mako3D.mesh_edges(handle);    # [[x1,y1,z1, x2,y2,z2], ...]
+faces = Mako3D.mesh_faces(handle);    # [[x1,y1,z1, x2,y2,z2, x3,y3,z3], ...]
+
+Mako3D.draw_vertices(handle, Mako3D.YELLOW, 0.06);  # a small sphere per vertex
+Mako3D.draw_edges(handle, Mako3D.YELLOW);           # every edge as a line
+
+vi = Mako3D.pick_vertex(cam, handle);  # nearest vertex to the mouse, or none
+                                        # if nothing is within ~14 screen pixels
+fi = Mako3D.pick_face(cam, handle);    # the triangle the mouse ray actually
+                                        # hits (nearest, if several), or none
+```
+
+| Function | Description |
+|---|---|
+| `mesh_info(h)` | `{vertex_count, edge_count, face_count}`, or `none` |
+| `mesh_vertices(h)` | Unique vertex positions, world space |
+| `mesh_edges(h)` | Unique edges, as endpoint pairs |
+| `mesh_faces(h)` | Triangles, as three corners each |
+| `draw_vertices(h, color, size=0.06)` | Small spheres at every vertex |
+| `draw_edges(h, color)` | Every edge as a line (independent of `set_object_wires`) |
+| `pick_vertex(cam, h, max_pixels=14)` | Index into `mesh_vertices()` nearest the mouse, or `none` |
+| `pick_face(cam, h)` | Index into `mesh_faces()` the mouse ray hits, or `none` |
+
+Vertices/edges/faces come from geometry generated fresh, in plain math, on
+every call, from the object's *current* shape and scale — not from raylib's
+own mesh generator, which uploads straight to the GPU and would crash
+without an open window. That keeps this headlessly testable like the rest
+of the object system (see `tests/mako3d_scene.mko`), and cheap enough for
+editor use, though not meant to be called every frame for hundreds of
+objects at once. A cube reports exactly 8 vertices, 12 edges, and 12 faces
+— edges come from each shape's own quads, not derived generically from
+triangle pairs, so a face's triangulation diagonal never shows up as a
+phantom edge. This is selection/inspection only — there's no dragging
+geometry (moving individual vertices) yet; rotation is also ignored, same
+as `object_bounds()`.
 
 ## Input extras
 

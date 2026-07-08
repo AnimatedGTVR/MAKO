@@ -37,16 +37,21 @@ main() {
     # A small scene, spawned once — the Inspector edits these live by handle.
     Mako3D.spawn_plane(0, 0, 0,  20, 20, Mako3D.color(30, 32, 40));
     pillar = Mako3D.spawn_cylinder(0, 1.5, 0,  0.6, 0.9, 3, Mako3D.GOLD);
+    Mako3D.set_object_name(pillar, "pillar");
     props = [];
     px = 0 - 4;
+    prop_i = 0;
     while px <= 4 {
         if px != 0 {
             h = Mako3D.spawn_cube(px, 0.5, 3,  1, 1, 1, Mako3D.color(90, 130, 200));
+            Mako3D.set_object_name(h, "prop {prop_i}");
             push(props, h);
+            prop_i = prop_i + 1;
         }
         px = px + 2;
     }
     orbiter = Mako3D.spawn_sphere(6, 2, 0,  0.8, Mako3D.SKYBLUE);
+    Mako3D.set_object_name(orbiter, "orbiter");
 
     spin = true;
     spin_speed = 1.0;
@@ -193,7 +198,7 @@ main() {
         # change straight back with set_object_*() — a real live editor loop.
         if show_inspector {
             MakoUI.set_window_pos(10, 58);
-            MakoUI.set_window_size(300, 260);
+            MakoUI.set_window_size(300, 520);
             MakoUI.begin_window("Inspector");
 
             if MakoUI.begin_tab_bar("main_tabs") {
@@ -220,6 +225,8 @@ main() {
                             selected = none;
                         } else {
                             MakoUI.text("Shape: {info["shape"]}   handle {selected}");
+                            new_name = MakoUI.input_text("Name##obj_name", info["name"]);
+                            if new_name != info["name"] { Mako3D.set_object_name(selected, new_name); }
                             MakoUI.separator();
 
                             nx = MakoUI.drag("X", info["x"], 0.05);
@@ -229,12 +236,12 @@ main() {
                                 Mako3D.set_object_pos(selected, nx, ny, nz);
                             }
 
+                            # A wheel-style color picker — real hue ring +
+                            # saturation/value square, not three flat sliders.
                             col = info["color"];
-                            nr = MakoUI.slider("R", col[0], 0, 255);
-                            ng = MakoUI.slider("G", col[1], 0, 255);
-                            nb = MakoUI.slider("B", col[2], 0, 255);
-                            if nr != col[0] or ng != col[1] or nb != col[2] {
-                                Mako3D.set_object_color(selected, Mako3D.color(nr, ng, nb));
+                            new_col = MakoUI.color_picker("##obj_color", col[0], col[1], col[2]);
+                            if new_col[0] != col[0] or new_col[1] != col[1] or new_col[2] != col[2] {
+                                Mako3D.set_object_color(selected, Mako3D.color(new_col[0], new_col[1], new_col[2]));
                             }
 
                             wires = MakoUI.checkbox("Wireframe outline", info["wires"]);

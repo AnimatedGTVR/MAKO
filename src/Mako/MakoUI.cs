@@ -364,6 +364,16 @@ sealed class MakoUI : IDisposable
     /// object underneath it.
     public bool WantsMouse()                  => ImGui.GetIO().WantCaptureMouse;
 
+    /// A wheel-style color picker (hue ring + saturation/value square).
+    /// Takes and returns 0-255 channels, matching Mako2D/Mako3D's color
+    /// convention, so its result feeds straight into Mako3D.color(...).
+    public List<object?> ColorPicker(string label, double r, double g, double b)
+    {
+        var v = new Vector3((float)(r / 255.0), (float)(g / 255.0), (float)(b / 255.0));
+        ImGui.ColorPicker3(label, ref v, ImGuiColorEditFlags.PickerHueWheel);
+        return new List<object?> { (object?)(v.X * 255.0), v.Y * 255.0, v.Z * 255.0 };
+    }
+
     // ── Tabs ──────────────────────────────────────────────────────────────────
 
     public bool BeginTabBar(string id)       => ImGui.BeginTabBar(id);

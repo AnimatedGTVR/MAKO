@@ -122,6 +122,7 @@ All examples install globally. Run these from any directory:
 | `mko ui_demo.mko`      | Dear ImGui desktop UI — menus, tables, modals, cherry-blossom theme      |
 | `mko embedded_ui_demo.mko` | MakoUI embedded live in a 3D scene — menu bar, toolbar, click an object to edit it live in the Inspector, no second window |
 | `mko scene_demo.mko` | Mako3D's scene/object system — spawn dozens of objects once, `draw_scene()` handles the rest, click to select |
+| `mko mesh_edit_demo.mko` | Blender-style Edit Mode — see and pick an object's actual vertices/edges/faces |
 | `mko sound_3d.mko`     | 3D positional audio — beacons that pan and fade as you fly               |
 | `mko input_test.mko`   | Visual input tester — every key/button lights up live                    |
 

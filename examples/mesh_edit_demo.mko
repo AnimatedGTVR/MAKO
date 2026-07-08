@@ -1,0 +1,70 @@
+using Mako3D;
+using Inputs;
+
+# Blender-style Edit Mode: Object Mode selects a whole object (pick_object);
+# this drops one level deeper into its actual vertices, edges, and faces.
+#
+#   WASD/arrows fly, Q/E up/down, middle mouse orbit, scroll zoom
+#   TAB   — switch which object is being edited (cube / sphere / cylinder)
+#   V     — toggle vertex view (yellow dots)
+#   E     — toggle edge view (yellow wireframe)
+#   Click — pick the nearest vertex under the mouse (prints its position)
+
+main() {
+    Mako3D.init(1000, 680, "Mesh Edit Mode");
+    Mako3D.fps(60);
+
+    cam = Mako3D.camera(8, 6, 8,  0, 0, 0);
+
+    cube     = Mako3D.spawn_cube(0 - 3, 1, 0,  2, 2, 2, Mako3D.RED);
+    sphere   = Mako3D.spawn_sphere(0, 1, 0,  1.2, Mako3D.SKYBLUE);
+    cylinder = Mako3D.spawn_cylinder(3, 1, 0,  0.7, 0.7, 2, Mako3D.LIME);
+    Mako3D.spawn_plane(0, 0, 0,  16, 16, Mako3D.color(30, 32, 40));
+
+    targets = [cube, sphere, cylinder];
+    names = ["cube", "sphere", "cylinder"];
+    target_i = 0;
+
+    show_verts = true;
+    show_edges = true;
+
+    while Mako3D.running() {
+        dt = Mako3D.delta();
+        Mako3D.update_camera(cam, 8);
+
+        if Inputs.key_pressed("TAB") { target_i = (target_i + 1) % len(targets); }
+        if Inputs.key_pressed("V") { show_verts = not show_verts; }
+        if Inputs.key_pressed("E") { show_edges = not show_edges; }
+
+        current = targets[target_i];
+
+        if Inputs.mouse_pressed("left") {
+            vi = Mako3D.pick_vertex(cam, current);
+            if vi != none {
+                verts = Mako3D.mesh_vertices(current);
+                v = verts[vi];
+                print "picked vertex {vi} of {names[target_i]}: ({round(v[0]*100)/100}, {round(v[1]*100)/100}, {round(v[2]*100)/100})";
+            }
+        }
+
+        Mako3D.begin();
+        Mako3D.clear(Mako3D.color(16, 16, 24));
+        Mako3D.begin_3d(cam);
+        Mako3D.grid(20, 1);
+        Mako3D.draw_scene();
+
+        if show_verts { Mako3D.draw_vertices(current, Mako3D.YELLOW, 0.07); }
+        if show_edges { Mako3D.draw_edges(current, Mako3D.YELLOW); }
+
+        Mako3D.end_3d();
+
+        info = Mako3D.mesh_info(current);
+        Mako3D.text("Editing: {names[target_i]}  (TAB to switch)", 10, 10, 20, Mako3D.WHITE);
+        Mako3D.text("Vertices: {info["vertex_count"]}   Edges: {info["edge_count"]}   Faces: {info["face_count"]}", 10, 36, 16, Mako3D.LIGHTGRAY);
+        Mako3D.text("V: toggle vertices   E: toggle edges   Click: pick a vertex", 10, 58, 15, Mako3D.LIGHTGRAY);
+        Mako3D.draw_fps(900, 10);
+        Mako3D.end();
+    }
+
+    Mako3D.close();
+}

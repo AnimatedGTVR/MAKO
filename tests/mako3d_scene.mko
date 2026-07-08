@@ -110,5 +110,53 @@ main() {
     delete("/tmp/mako_scene_test.json");
     Mako3D.clear_objects();
 
+    # ── Object naming ─────────────────────────────────────────────────────────
+    hero = Mako3D.spawn_cube(0, 0, 0,  1, 1, 1, Mako3D.RED);
+    Mako3D.set_object_name(hero, "hero");
+    assert(Mako3D.object_info(hero)["name"] == "hero", "object_info reports the name");
+    assert(Mako3D.find_object("hero") == hero, "find_object finds it by name");
+    assert(Mako3D.find_object("nope") == none, "find_object returns none for an unknown name");
+
+    # Names round-trip through save/load too
+    Mako3D.save_scene("/tmp/mako_name_test.json");
+    Mako3D.clear_objects();
+    Mako3D.load_scene("/tmp/mako_name_test.json");
+    assert(Mako3D.find_object("hero") == 0, "a saved name is restored on load");
+    delete("/tmp/mako_name_test.json");
+
+    Mako3D.clear_objects();
+
+    # ── Mesh edit: vertices/edges/faces ──────────────────────────────────────
+    # A cube mesh has 8 corners, 12 edges, and 12 triangular faces (2 per side).
+    box = Mako3D.spawn_cube(0, 0, 0,  2, 2, 2, Mako3D.WHITE);
+    info = Mako3D.mesh_info(box);
+    assert(info["vertex_count"] == 8, "a cube's mesh has 8 unique vertices");
+    assert(info["edge_count"] == 12, "a cube's mesh has 12 edges");
+    assert(info["face_count"] == 12, "a cube's mesh has 12 triangular faces (2 per side)");
+
+    verts = Mako3D.mesh_vertices(box);
+    assert(len(verts) == 8, "mesh_vertices returns one entry per unique vertex");
+    # Every corner of a 2x2x2 cube centered at the origin is 1 unit out on each axis.
+    v0 = verts[0];
+    assert(abs(abs(v0[0]) - 1) < 0.01, "vertex x is at the cube's half-extent");
+    assert(abs(abs(v0[1]) - 1) < 0.01, "vertex y is at the cube's half-extent");
+    assert(abs(abs(v0[2]) - 1) < 0.01, "vertex z is at the cube's half-extent");
+
+    edges = Mako3D.mesh_edges(box);
+    assert(len(edges) == 12, "mesh_edges returns one entry per unique edge");
+    assert(len(edges[0]) == 6, "each edge is [x1,y1,z1, x2,y2,z2]");
+
+    faces = Mako3D.mesh_faces(box);
+    assert(len(faces) == 12, "mesh_faces returns one entry per triangle");
+    assert(len(faces[0]) == 9, "each face is [x1,y1,z1, x2,y2,z2, x3,y3,z3]");
+
+    # A moved object's mesh data is offset by its world position
+    Mako3D.set_object_pos(box, 10, 0, 0);
+    verts2 = Mako3D.mesh_vertices(box);
+    assert(abs(verts2[0][0] - v0[0] - 10) < 0.01, "mesh_vertices reflects the object's world position");
+
+    assert(Mako3D.mesh_info(999) == none, "mesh_info on a bad handle is none");
+
+    Mako3D.clear_objects();
     print "Mako3D scene tests pass!";
 }

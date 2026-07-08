@@ -662,7 +662,7 @@ class Interpreter
         "MakoUI.tooltip", "MakoUI.set_tooltip",
         // MakoUI — query
         "MakoUI.is_hovered", "MakoUI.is_clicked", "MakoUI.is_key_pressed",
-        "MakoUI.get_time", "MakoUI.framerate", "MakoUI.fps_counter", "MakoUI.wants_mouse",
+        "MakoUI.get_time", "MakoUI.framerate", "MakoUI.fps_counter", "MakoUI.wants_mouse", "MakoUI.color_picker",
         "MakoUI.begin_tab_bar", "MakoUI.end_tab_bar", "MakoUI.begin_tab_item", "MakoUI.end_tab_item",
         // MakoUI — style & themes
         "MakoUI.push_color", "MakoUI.pop_color", "MakoUI.push_var", "MakoUI.pop_var",
@@ -1409,6 +1409,12 @@ class Interpreter
             case "MakoUI.wants_mouse":
                 RequireArity(name, args, 0);
                 EnsureUI(name); result = (object?)_ui!.WantsMouse(); return true;
+
+            case "MakoUI.color_picker":
+                if (args.Count != 4) throw new MakoError("MakoUI.color_picker() expects (label, r, g, b)");
+                EnsureUI(name);
+                result = _ui!.ColorPicker(AsStr(name, args[0]), AsNum(name, args[1]), AsNum(name, args[2]), AsNum(name, args[3]));
+                return true;
 
             case "MakoUI.begin_tab_bar":
                 RequireArity(name, args, 1);

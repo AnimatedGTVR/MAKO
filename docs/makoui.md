@@ -178,6 +178,16 @@ choice  = MakoUI.combo("Fruit", choice, ["Apple", "Banana", "Cherry"]);
 | `combo(label, index, items_list)` | Dropdown, returns new index |
 | `progress(fraction)` | Progress bar 0–1 |
 | `collapsing(label)` | Collapsible header — `true` while open |
+| `color_picker(label, r, g, b)` | A wheel-style picker (hue ring + saturation/value square) — returns updated `[r, g, b]` |
+
+`color_picker` takes and returns 0-255 channels, matching every other color
+convention in MAKO, so its result plugs straight into `Mako3D.color(...)` or
+`Mako2D.color(...)`:
+
+```mako
+col = MakoUI.color_picker("Object color##picker", col[0], col[1], col[2]);
+Mako3D.set_object_color(selected, Mako3D.color(col[0], col[1], col[2]));
+```
 
 ## Layout
 
