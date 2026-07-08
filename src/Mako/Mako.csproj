@@ -11,9 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ImGui.NET"                  Version="1.90.9.1" />
-    <PackageReference Include="Silk.NET.Windowing.Glfw"   Version="2.21.0" />
-    <PackageReference Include="Silk.NET.OpenGL"            Version="2.21.0" />
-    <PackageReference Include="Silk.NET.Input.Glfw"        Version="2.21.0" />
+    <PackageReference Include="ImGui.NET" Version="1.90.9.1" />
+    <PackageReference Include="Raylib-cs" Version="8.0.0" />
+    <PackageReference Include="Silk.NET.Windowing.Glfw" Version="2.21.0" />
+    <PackageReference Include="Silk.NET.OpenGL" Version="2.21.0" />
+    <PackageReference Include="Silk.NET.Input.Glfw" Version="2.21.0" />
   </ItemGroup>
 </Project>

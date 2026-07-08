@@ -20,6 +20,7 @@ class Interpreter
 {
     private readonly Dictionary<string, FnDecl> _funcs = new();
     private MakoUI? _ui;
+    private bool    _rayActive;
 
     // Each scope holds variable values and a set of const names.
     private sealed class Scope
@@ -34,7 +35,11 @@ class Interpreter
     public void Execute(ProgramNode program, string baseDir = "")
     {
         try { ExecuteCore(program, baseDir); }
-        finally { _ui?.Dispose(); _ui = null; }
+        finally
+        {
+            _ui?.Dispose(); _ui = null;
+            if (_rayActive) { Raylib_cs.Raylib.CloseWindow(); _rayActive = false; }
+        }
     }
 
     /// REPL entry — runs in the persistent interpreter state, prints expression results.
@@ -79,7 +84,17 @@ class Interpreter
 
             if (PackageManager.NativePackages.Contains(pkg.Name))
             {
-                _ui ??= new MakoUI();
+                if (pkg.Name.Equals("MakoUI", StringComparison.OrdinalIgnoreCase) ||
+                    pkg.Name.Equals("IMGUI",  StringComparison.OrdinalIgnoreCase))
+                    _ui ??= new MakoUI();
+
+                if (pkg.Name.Equals("MakoRay", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Inject named color constants into global scope.
+                    foreach (var (k, v) in MakoRay.Colors)
+                        SetVar($"MakoRay.{k}", v);
+                    _rayActive = true;
+                }
                 continue;
             }
 
@@ -556,6 +571,24 @@ class Interpreter
         // MakoUI — style & themes
         "MakoUI.push_color", "MakoUI.pop_color", "MakoUI.push_var", "MakoUI.pop_var",
         "MakoUI.theme_dark", "MakoUI.theme_light", "MakoUI.theme_mako",
+        // MakoRay — lifecycle
+        "MakoRay.init", "MakoRay.fps", "MakoRay.running", "MakoRay.begin", "MakoRay.end",
+        "MakoRay.close", "MakoRay.delta", "MakoRay.get_fps", "MakoRay.get_time",
+        "MakoRay.width", "MakoRay.height", "MakoRay.title",
+        // MakoRay — drawing
+        "MakoRay.clear", "MakoRay.text", "MakoRay.draw_fps",
+        // MakoRay — shapes
+        "MakoRay.rect", "MakoRay.rect_lines", "MakoRay.rect_round",
+        "MakoRay.circle", "MakoRay.circle_lines",
+        "MakoRay.line", "MakoRay.triangle",
+        // MakoRay — input
+        "MakoRay.key_down", "MakoRay.key_pressed", "MakoRay.key_released", "MakoRay.get_key",
+        "MakoRay.mouse_x", "MakoRay.mouse_y",
+        "MakoRay.mouse_down", "MakoRay.mouse_pressed", "MakoRay.mouse_wheel",
+        // MakoRay — color
+        "MakoRay.color", "MakoRay.fade",
+        // MakoRay — audio
+        "MakoRay.init_audio", "MakoRay.close_audio",
     ];
 
     private bool TryBuiltin(string name, List<object?> args, out object? result)
@@ -1123,9 +1156,29 @@ class Interpreter
             case "MakoUI.framerate":
                 EnsureUI(name); result = _ui!.GetFramerate(); return true;
 
+            // ── MakoRay ───────────────────────────────────────────────────────
             default:
+                if (name.StartsWith("MakoRay.", StringComparison.OrdinalIgnoreCase))
+                {
+                    EnsureRay(name);
+                    var fn2 = name["MakoRay.".Length..];
+                    if (MakoRay.Funcs.TryGetValue(fn2, out var rayFn))
+                    {
+                        result = rayFn(args);
+                        return true;
+                    }
+                    // Also handle color constants accessed as calls (shouldn't happen, but safe)
+                    throw new MakoError($"MakoRay.{fn2}() wasn't found");
+                }
                 return false;
         }
+    }
+
+    private void EnsureRay(string fn)
+    {
+        if (!_rayActive)
+            throw new MakoError(
+                $"{fn}() requires 'using MakoRay;' at the top of the script");
     }
 
     private void EnsureUI(string fn)
