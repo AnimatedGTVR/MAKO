@@ -111,8 +111,49 @@ if MakoUI.begin_tab_bar("main_tabs") {
 ```
 
 Only the content inside the active tab's `begin_tab_item`/`end_tab_item`
-block renders — this is the toolbar-with-tabs pattern for grouping panels
-over a 3D/2D scene. See `examples/embedded_ui_demo.mko`.
+block renders — good for grouping settings inside an inspector-style panel.
+See `examples/embedded_ui_demo.mko`.
+
+## Toolbar
+
+```mako
+MakoUI.begin_toolbar("main_toolbar", 48);   # id, height (default 44)
+
+if MakoUI.button("Pause") { ... }
+MakoUI.same_line();
+MakoUI.separator();                          # renders as a vertical divider
+MakoUI.same_line();
+if MakoUI.button("Grid: On") { ... }
+
+MakoUI.end_window();                         # any Begin() closes this way
+```
+
+A real toolbar (not a resizable floating window pretending to be one): pinned
+to the top of the viewport, spanning its full width, no title bar, can't be
+dragged/resized/scrolled. `same_line()` chains buttons into a row;
+`separator()` right after `same_line()` draws as a thin vertical divider
+between button groups instead of a horizontal rule.
+
+A common toolbar pattern — an FPS cap selector, cycling through presets on
+click:
+
+```mako
+const FPS_CAPS   = [30, 60, 120, 144, 240, 0];   # 0 = uncapped
+const FPS_LABELS = ["30", "60", "120", "144", "240", "Uncapped"];
+cap_i = 5;
+
+if MakoUI.button("FPS: {FPS_LABELS[cap_i]}##fps_cap") {
+    cap_i = (cap_i + 1) % len(FPS_CAPS);
+    Mako3D.fps(FPS_CAPS[cap_i]);             # 0 = uncapped in Mako3D too
+}
+```
+
+(The `##fps_cap` suffix gives the button a stable ID independent of its
+changing label text — standard practice for any button whose text updates.)
+
+If a `begin_main_menu_bar()` is also present, `begin_toolbar()` automatically
+sits just below it — the viewport's work area already excludes the menu
+bar's height.
 
 ## Widgets
 

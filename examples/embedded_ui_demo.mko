@@ -6,8 +6,9 @@ using MakoUI;
 # second window. Every piece of text, every readout, every control lives in
 # MakoUI panels; Mako3D is used only to render the 3D scene itself.
 #
-#   A TOOLBAR: a slim strip pinned to the top, icon-style buttons in a row
-#   An INSPECTOR: a tabbed floating panel below it for detailed settings
+#   A MENU BAR : File / View, pinned to the very top edge
+#   A TOOLBAR  : a slim strip below it, icon-style buttons in a row
+#   An INSPECTOR: a tabbed floating panel for detailed settings
 #
 #   WASD/arrows fly, Q/E up/down, middle mouse orbit, scroll zoom
 #   Tab between "Scene" / "Objects" / "Settings" in the inspector
@@ -20,16 +21,18 @@ const COLORS = [
     [190, 110, 230, 255],  # violet
 ];
 
+const FPS_CAPS = [30, 60, 120, 144, 240, 0];   # 0 = uncapped
+const FPS_LABELS = ["30", "60", "120", "144", "240", "Uncapped"];
+
 main() {
     Mako3D.init(1000, 680, "MakoUI Embedded Toolbar");
-    Mako3D.fps(0);   # uncapped, so the fps_counter graph has something to show
 
     MakoUI.attach();
     MakoUI.theme_mako();
 
     cam = Mako3D.camera(10, 8, 10,  0, 0, 0);
 
-    # Scene state — all editable live from the "Objects"/"Settings" tabs
+    # Scene state — all editable live from the toolbar / inspector
     spin = true;
     spin_speed = 1.0;
     cube_color_i = 0;
@@ -37,10 +40,13 @@ main() {
     bg = [18, 18, 26];
     show_grid = true;
     cam_speed = 8.0;
+    fps_cap_i = 5;   # start uncapped so the fps_counter graph has something to show
+    show_inspector = true;
+    quit = false;
 
     t = 0;
 
-    while Mako3D.running() {
+    while Mako3D.running() and not quit {
         dt = Mako3D.delta();
         if spin { t = t + dt * spin_speed; }
         Mako3D.update_camera(cam, cam_speed);
@@ -63,23 +69,43 @@ main() {
         # ── MakoUI overlay — every readout and control lives here ────────────
         MakoUI.begin();
 
-        # A real TOOLBAR: slim strip pinned to the top, spanning the full
-        # width, icon-style buttons in a row — Play/Pause, grid toggle, then
-        # one swatch button per color. This is the pattern from a normal
-        # desktop app's toolbar, not a floating settings window.
+        # A MENU BAR — the top-most strip, standard File/View menus.
+        if MakoUI.begin_main_menu_bar() {
+            if MakoUI.begin_menu("File") {
+                if MakoUI.menu_item("Quit", "Esc") { quit = true; }
+                MakoUI.end_menu();
+            }
+            if MakoUI.begin_menu("View") {
+                show_inspector = MakoUI.checkbox("Inspector", show_inspector);
+                MakoUI.end_menu();
+            }
+            MakoUI.end_main_menu_bar();
+        }
+        if Inputs.key_pressed("ESCAPE") { quit = true; }
+
+        # A TOOLBAR — pinned right below the menu bar (the viewport's work
+        # area already excludes the menu bar's height), full width, a row
+        # of icon-style buttons — Play/Pause, grid toggle, color swatches,
+        # FPS cap, and the live FPS counter.
         MakoUI.begin_toolbar("main_toolbar", 48);
 
         spin_label = "Pause";
         if not spin { spin_label = "Play"; }
         if MakoUI.button(spin_label) { spin = not spin; }
+        MakoUI.tooltip("Pause/resume the cube's orbit");
 
         MakoUI.same_line();
+        MakoUI.separator();
+        MakoUI.same_line();
+
         grid_label = "Grid: On";
         if not show_grid { grid_label = "Grid: Off"; }
         if MakoUI.button(grid_label) { show_grid = not show_grid; }
+        MakoUI.tooltip("Toggle the reference grid");
 
         MakoUI.same_line();
-        MakoUI.text("|");
+        MakoUI.separator();
+        MakoUI.same_line();
 
         i = 0;
         while i < len(COLORS) {
@@ -88,11 +114,24 @@ main() {
             MakoUI.push_color(21, c[0] / 255.0, c[1] / 255.0, c[2] / 255.0); # ImGuiCol.Button
             if MakoUI.small_button("  ##color{i}") { cube_color_i = i; }
             MakoUI.pop_color(1);
+            MakoUI.tooltip("Set cube color");
             i = i + 1;
         }
 
         MakoUI.same_line();
-        MakoUI.text("|");
+        MakoUI.separator();
+        MakoUI.same_line();
+
+        # FPS cap — click to cycle through common caps, matches the pattern
+        # from examples/settings.mko but as a proper toolbar control.
+        if MakoUI.button("FPS: {FPS_LABELS[fps_cap_i]}##fps_cap") {
+            fps_cap_i = (fps_cap_i + 1) % len(FPS_CAPS);
+            Mako3D.fps(FPS_CAPS[fps_cap_i]);
+        }
+        MakoUI.tooltip("Click to cycle the FPS cap");
+
+        MakoUI.same_line();
+        MakoUI.separator();
         MakoUI.same_line();
         MakoUI.fps_counter();
 
@@ -100,36 +139,39 @@ main() {
 
         # An INSPECTOR: a normal floating, tabbed panel — for settings that
         # need more room than a toolbar button (sliders, detailed readouts).
-        MakoUI.set_window_pos(10, 58);
-        MakoUI.set_window_size(300, 220);
-        MakoUI.begin_window("Inspector");
+        if show_inspector {
+            MakoUI.set_window_pos(10, 58);
+            MakoUI.set_window_size(300, 220);
+            MakoUI.begin_window("Inspector");
 
-        if MakoUI.begin_tab_bar("main_tabs") {
+            if MakoUI.begin_tab_bar("main_tabs") {
 
-            if MakoUI.begin_tab_item("Scene") {
-                MakoUI.text("Camera: WASD fly, MMB orbit, wheel zoom");
-                MakoUI.text("Cube orbit angle: {round(t * 57.3) % 360} deg");
-                MakoUI.end_tab_item();
+                if MakoUI.begin_tab_item("Scene") {
+                    MakoUI.text("Camera: WASD fly, MMB orbit, wheel zoom");
+                    MakoUI.text("Cube orbit angle: {round(t * 57.3) % 360} deg");
+                    MakoUI.end_tab_item();
+                }
+
+                if MakoUI.begin_tab_item("Objects") {
+                    spin_speed = MakoUI.slider("Spin speed", spin_speed, 0, 4);
+                    cube_size = MakoUI.slider("Cube size", cube_size, 0.5, 4);
+                    MakoUI.end_tab_item();
+                }
+
+                if MakoUI.begin_tab_item("Settings") {
+                    cam_speed = MakoUI.slider("Camera speed", cam_speed, 1, 20);
+                    bg[0] = MakoUI.slider("Background R", bg[0], 0, 255);
+                    bg[1] = MakoUI.slider("Background G", bg[1], 0, 255);
+                    bg[2] = MakoUI.slider("Background B", bg[2], 0, 255);
+                    MakoUI.end_tab_item();
+                }
+
+                MakoUI.end_tab_bar();
             }
 
-            if MakoUI.begin_tab_item("Objects") {
-                spin_speed = MakoUI.slider("Spin speed", spin_speed, 0, 4);
-                cube_size = MakoUI.slider("Cube size", cube_size, 0.5, 4);
-                MakoUI.end_tab_item();
-            }
-
-            if MakoUI.begin_tab_item("Settings") {
-                cam_speed = MakoUI.slider("Camera speed", cam_speed, 1, 20);
-                bg[0] = MakoUI.slider("Background R", bg[0], 0, 255);
-                bg[1] = MakoUI.slider("Background G", bg[1], 0, 255);
-                bg[2] = MakoUI.slider("Background B", bg[2], 0, 255);
-                MakoUI.end_tab_item();
-            }
-
-            MakoUI.end_tab_bar();
+            MakoUI.end_window();
         }
 
-        MakoUI.end_window();
         MakoUI.end();
 
         Mako3D.end();
