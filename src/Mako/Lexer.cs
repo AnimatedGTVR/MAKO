@@ -36,6 +36,7 @@ class Lexer
         ["not"]       = TokenType.Not,
         ["using"]     = TokenType.Using,
         ["use"]       = TokenType.Use,
+        ["from"]      = TokenType.From,
         ["true"]      = TokenType.True,
         ["false"]     = TokenType.False,
         ["none"]      = TokenType.None,

@@ -8,11 +8,16 @@ record FnDecl(string Name, List<string> Params, List<Statement> Body)
     public string? Source { get; set; }
 }
 
+/// A resolved package reference from a 'using' declaration.
+/// Source is null for native packages or bare names (registry-resolved).
+record PackageRef(string Name, string? Source);   // Source = "github:User/Repo" or null
+
 record ProgramNode(
     string? ScriptName,
     string? Namespace,
-    List<string> Packages,     // "using PackageName" — named packages with auto-install
-    List<string> Imports,      // "use file.mko"      — local relative file imports
+    List<PackageRef> Packages,  // "using Name" / "using Name from "github:...""
+    List<string> Imports,       // "use file.mko" — local relative file imports
+    List<(string Name, Expr Value)> Constants, // top-level const declarations
     List<FnDecl> Functions,
     List<Statement> Body
 );

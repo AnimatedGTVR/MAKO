@@ -21,7 +21,7 @@ enum TokenType
     Run,
     And, Or, Not,
     Const,
-    Using, Use,
+    Using, Use, From,
 
     // Operators
     Assign,   // =

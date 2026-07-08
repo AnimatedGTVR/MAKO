@@ -35,10 +35,11 @@ class Parser
     {
         string? scriptName = null;
         string? ns         = null;
-        var packages = new List<string>();
-        var imports  = new List<string>();
-        var fns      = new List<FnDecl>();
-        var body     = new List<Statement>();
+        var packages  = new List<PackageRef>();
+        var imports   = new List<string>();
+        var constants = new List<(string Name, Expr Value)>();
+        var fns       = new List<FnDecl>();
+        var body      = new List<Statement>();
         Token? mainTok = null;
 
         if (Check(TokenType.Script))
@@ -55,11 +56,20 @@ class Parser
             Expect(TokenType.Semicolon, "namespace name");
         }
 
+        // using Name;
+        // using Name from "github:User/Repo";
         while (Check(TokenType.Using))
         {
             Advance();
-            packages.Add(Expect(TokenType.Identifier, "expected a package name after 'using'").Value);
-            Expect(TokenType.Semicolon, "package name");
+            var pkgName = Expect(TokenType.Identifier, "expected a package name after 'using'").Value;
+            string? source = null;
+            if (Check(TokenType.From))
+            {
+                Advance();
+                source = Expect(TokenType.String, "expected a quoted source URL after 'from'").Value;
+            }
+            packages.Add(new PackageRef(pkgName, source));
+            Expect(TokenType.Semicolon, "using declaration");
         }
 
         while (Check(TokenType.Use))
@@ -67,6 +77,17 @@ class Parser
             Advance();
             imports.Add(Expect(TokenType.String, "expected a quoted file path after 'use'").Value);
             Expect(TokenType.Semicolon, "use path");
+        }
+
+        // Top-level const declarations (before fn/main)
+        while (Check(TokenType.Const))
+        {
+            Advance();
+            var cname = Expect(TokenType.Identifier, "expected a name after 'const'").Value;
+            Expect(TokenType.Assign, $"expected '=' after const name '{cname}'");
+            var cval = ParseExpr();
+            Expect(TokenType.Semicolon, $"const '{cname}'");
+            constants.Add((cname, cval));
         }
 
         while (!Check(TokenType.Eof))
@@ -96,7 +117,7 @@ class Parser
             {
                 var s = tok.Value is "func" or "function" or "def"
                     ? "fn"
-                    : Suggest.Closest(tok.Value, ["fn", "main", "use", "using", "script", "namespace"]);
+                    : Suggest.Closest(tok.Value, ["fn", "main", "use", "using", "const", "script", "namespace"]);
                 if (s != null) hint = $" (did you mean '{s}'?)";
             }
             throw new MakoError(
@@ -104,7 +125,7 @@ class Parser
                 tok.Line, tok.Col, Math.Max(1, tok.Value.Length));
         }
 
-        return new ProgramNode(scriptName, ns, packages, imports, fns, body);
+        return new ProgramNode(scriptName, ns, packages, imports, constants, fns, body);
     }
 
     // ── Declarations ──────────────────────────────────────────────────────────

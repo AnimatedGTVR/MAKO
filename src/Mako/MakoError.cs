@@ -11,6 +11,9 @@ class MakoError : Exception
     /// so the CLI can show a snippet from the right source.
     public string? SourcePath { get; init; }
 
+    /// Optional "did you mean X?" or contextual hint shown below the error line.
+    public string? Hint { get; init; }
+
     public MakoError(string message, int line = 0, int col = 0, int length = 1)
         : base(line > 0 ? $"[line {line}] {message}" : message)
     {

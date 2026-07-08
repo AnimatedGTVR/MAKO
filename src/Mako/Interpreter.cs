@@ -28,22 +28,55 @@ class Interpreter
         finally { _ui?.Dispose(); _ui = null; }
     }
 
+    /// REPL entry — runs in the persistent interpreter state, prints expression results.
+    public void ExecuteRepl(ProgramNode program)
+    {
+        // Register any new functions declared in this line.
+        foreach (var fn in program.Functions)
+            _funcs[fn.Name] = fn;
+
+        foreach (var (cname, cexpr) in program.Constants)
+        {
+            var cval = Eval(cexpr);
+            SetVar(cname, cval);
+            _scopes[0].Consts.Add(cname);
+        }
+
+        foreach (var stmt in program.Body)
+        {
+            // Auto-print expression statements that produce a value.
+            if (stmt is ExprStmt es)
+            {
+                var val = Eval(es.Value);
+                if (val != null)
+                    Console.WriteLine(Stringify(val));
+            }
+            else
+            {
+                RunStatement(stmt);
+            }
+        }
+    }
+
     private void ExecuteCore(ProgramNode program, string baseDir)
     {
-        // ── using PackageName — named packages ───────────────────────────────
+        // ── using PackageName [from "source"] — named packages ───────────────
         foreach (var pkg in program.Packages)
         {
-            PackageManager.Ensure(pkg);
+            if (pkg.Source != null)
+                PackageManager.RegisterSource(pkg.Name, pkg.Source);
 
-            if (PackageManager.NativePackages.Contains(pkg))
+            PackageManager.Ensure(pkg.Name);
+
+            if (PackageManager.NativePackages.Contains(pkg.Name))
             {
                 _ui ??= new MakoUI();
                 continue;
             }
 
-            var indexPath = PackageManager.IndexPath(pkg);
+            var indexPath = PackageManager.IndexPath(pkg.Name);
             if (indexPath == null)
-                throw new MakoError($"package '{pkg}' has no index.mko");
+                throw new MakoError($"package '{pkg.Name}' has no index.mko");
 
             var pkgSrc = File.ReadAllText(indexPath);
             ProgramNode pkgAst;
@@ -52,7 +85,7 @@ class Interpreter
             { throw new MakoError(e.RawMessage, e.Line, e.Col, e.Length) { SourcePath = indexPath }; }
 
             var pkgNs = pkgAst.Namespace
-                ?? throw new MakoError($"package '{pkg}' (index.mko) must declare a namespace");
+                ?? throw new MakoError($"package '{pkg.Name}' (index.mko) must declare a namespace");
             foreach (var fn in pkgAst.Functions)
             {
                 fn.Source = indexPath;
@@ -96,6 +129,14 @@ class Interpreter
                 _funcs[$"{ns}.{fn.Name}"] = fn;
         }
 
+        // Top-level const declarations — evaluated once, marked immutable globally.
+        foreach (var (cname, cexpr) in program.Constants)
+        {
+            var cval = Eval(cexpr);
+            SetVar(cname, cval);
+            _scopes[0].Consts.Add(cname);
+        }
+
         try   { foreach (var stmt in program.Body) RunStatement(stmt); }
         catch (ReturnSignal) { }
     }
@@ -116,7 +157,7 @@ class Interpreter
                 ForStmt            => 3,
                 _                  => 1,
             };
-            throw new MakoError(e.RawMessage, stmt.Line, stmt.Col, len);
+            throw new MakoError(e.RawMessage, stmt.Line, stmt.Col, len) { Hint = e.Hint };
         }
     }
 
@@ -224,7 +265,7 @@ class Interpreter
                 BinaryExpr b         => b.Op.Length,
                 _                    => 1,
             };
-            throw new MakoError(e.RawMessage, expr.Line, expr.Col, len);
+            throw new MakoError(e.RawMessage, expr.Line, expr.Col, len) { Hint = e.Hint };
         }
     }
 
@@ -340,10 +381,11 @@ class Interpreter
 
         if (!_funcs.TryGetValue(name, out var fn))
         {
-            var hint = Suggest.Closest(name, _funcs.Keys.Concat(BuiltinNames));
-            throw new MakoError(hint != null
-                ? $"function '{name}' wasn't found (did you mean '{hint}'?)"
-                : $"function '{name}' wasn't found (got null reference)");
+            var suggestion = Suggest.Closest(name, _funcs.Keys.Concat(BuiltinNames));
+            throw new MakoError($"function '{name}' wasn't found")
+            {
+                Hint = suggestion != null ? $"did you mean '{suggestion}'?" : null
+            };
         }
 
         if (args.Count != fn.Params.Count)
@@ -374,6 +416,9 @@ class Interpreter
         "len", "upper", "lower", "trim", "contains", "starts_with", "ends_with",
         "replace", "split", "join",
         "push", "pop", "first", "last", "reverse", "has",
+        // I/O & system stdlib
+        "read", "write", "append", "exists", "delete", "lines",
+        "time", "random", "random_int", "sleep", "env",
         // MakoUI — lifecycle
         "MakoUI.init", "MakoUI.running", "MakoUI.begin", "MakoUI.end",
         // MakoUI — windows
@@ -526,6 +571,76 @@ class Interpreter
             case "has":
                 RequireArity(name, args, 2);
                 result = AsList(name, args[0]).Any(v => ValuesEqual(v, args[1]));
+                return true;
+
+            // ── I/O stdlib ────────────────────────────────────────────────────
+            case "read":
+                RequireArity(name, args, 1);
+                var readPath = AsStr(name, args[0]);
+                if (!File.Exists(readPath))
+                    throw new MakoError($"read(): file not found: '{readPath}'");
+                result = File.ReadAllText(readPath); return true;
+
+            case "write":
+                RequireArity(name, args, 2);
+                File.WriteAllText(AsStr(name, args[0]), Stringify(args[1]));
+                result = null; return true;
+
+            case "append":
+                RequireArity(name, args, 2);
+                File.AppendAllText(AsStr(name, args[0]), Stringify(args[1]));
+                result = null; return true;
+
+            case "exists":
+                RequireArity(name, args, 1);
+                var exPath = AsStr(name, args[0]);
+                result = (object?)(File.Exists(exPath) || Directory.Exists(exPath)); return true;
+
+            case "delete":
+                RequireArity(name, args, 1);
+                var delPath = AsStr(name, args[0]);
+                if (File.Exists(delPath)) File.Delete(delPath);
+                else if (Directory.Exists(delPath)) Directory.Delete(delPath, recursive: true);
+                result = null; return true;
+
+            case "lines":
+                RequireArity(name, args, 1);
+                var linesPath = AsStr(name, args[0]);
+                if (!File.Exists(linesPath))
+                    throw new MakoError($"lines(): file not found: '{linesPath}'");
+                result = File.ReadAllLines(linesPath)
+                             .Select(l => (object?)l)
+                             .ToList(); return true;
+
+            // ── Time / random ─────────────────────────────────────────────────
+            case "time":
+                RequireArity(name, args, 0);
+                result = (double)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0; return true;
+
+            case "random":
+                if (args.Count == 0)
+                {
+                    result = Random.Shared.NextDouble(); return true;
+                }
+                RequireArity(name, args, 2);
+                var rlo = AsNum(name, args[0]);
+                var rhi = AsNum(name, args[1]);
+                result = Random.Shared.NextDouble() * (rhi - rlo) + rlo; return true;
+
+            case "random_int":
+                RequireArity(name, args, 2);
+                var rilo = (int)AsNum(name, args[0]);
+                var rihi = (int)AsNum(name, args[1]);
+                result = (double)Random.Shared.Next(rilo, rihi + 1); return true;
+
+            case "sleep":
+                RequireArity(name, args, 1);
+                Thread.Sleep((int)(AsNum(name, args[0]) * 1000));
+                result = null; return true;
+
+            case "env":
+                RequireArity(name, args, 1);
+                result = (object?)(Environment.GetEnvironmentVariable(AsStr(name, args[0])) ?? "");
                 return true;
 
             // ── MakoUI ────────────────────────────────────────────────────────
@@ -850,13 +965,14 @@ class Interpreter
         for (int i = _scopes.Count - 1; i >= 0; i--)
             if (_scopes[i].Vars.TryGetValue(name, out var v)) return v;
 
-        var candidates = _scopes.SelectMany(s => s.Vars.Keys)
-                                .Concat(_funcs.Keys)
-                                .Concat(BuiltinNames);
-        var hint = Suggest.Closest(name, candidates);
-        throw new MakoError(hint != null
-            ? $"type, function, or name '{name}' wasn't found (did you mean '{hint}'?)"
-            : $"type, function, or name '{name}' wasn't found (got null reference)");
+        var candidates  = _scopes.SelectMany(s => s.Vars.Keys)
+                                 .Concat(_funcs.Keys)
+                                 .Concat(BuiltinNames);
+        var suggestion = Suggest.Closest(name, candidates);
+        throw new MakoError($"unknown variable '{name}'")
+        {
+            Hint = suggestion != null ? $"did you mean '{suggestion}'?" : null
+        };
     }
 
     private void SetVar(string name, object? value)

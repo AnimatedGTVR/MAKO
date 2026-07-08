@@ -2,7 +2,7 @@ namespace Mako;
 
 static class PackageManager
 {
-    private static readonly string PackagesDir =
+    public static readonly string PackagesDir =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                      "mko", "packages");
 
@@ -10,13 +10,25 @@ static class PackageManager
     public static readonly HashSet<string> NativePackages =
         new(StringComparer.OrdinalIgnoreCase) { "MakoUI", "IMGUI" };
 
-    // Public registry: name → GitHub clone URL.
+    // Public registry: name → clone URL. Populated by 'using Name from "..."' or built-in list.
     private static readonly Dictionary<string, string> Registry =
         new(StringComparer.OrdinalIgnoreCase)
         {
             ["MakoUI"] = "https://github.com/AnimatedGTVR/MakoUI",
             ["IMGUI"]  = "https://github.com/AnimatedGTVR/MakoUI",
         };
+
+    /// Resolve a source string like "github:User/Repo" to a full clone URL.
+    public static string ResolveUrl(string source) => source.StartsWith("github:", StringComparison.OrdinalIgnoreCase)
+        ? "https://github.com/" + source["github:".Length..]
+        : source; // treat anything else as a raw URL
+
+    /// Register a package from a 'using Name from "source"' declaration.
+    public static void RegisterSource(string name, string source)
+    {
+        if (!NativePackages.Contains(name))
+            Registry[name] = ResolveUrl(source);
+    }
 
     /// Ensures the package is locally available, cloning it if needed.
     /// Native packages are a no-op.
@@ -30,8 +42,13 @@ static class PackageManager
         if (!Registry.TryGetValue(name, out var url))
             throw new MakoError(
                 $"unknown package '{name}' — not in the registry and not installed locally\n" +
-                $"  Install manually: git clone <url> {dir}");
+                $"  Tip: use 'using {name} from \"github:User/Repo\";' to specify where to get it");
 
+        Clone(name, url, dir);
+    }
+
+    private static void Clone(string name, string url, string dir)
+    {
         Console.Error.WriteLine($"mko: installing '{name}' from {url} ...");
         Directory.CreateDirectory(PackagesDir);
 
@@ -45,7 +62,6 @@ static class PackageManager
 
         if (proc.ExitCode != 0)
         {
-            // Clean up partial clone so future runs retry cleanly.
             try { Directory.Delete(dir, recursive: true); } catch { }
             throw new MakoError($"failed to install '{name}' (git exited {proc.ExitCode})");
         }
@@ -61,6 +77,22 @@ static class PackageManager
         return File.Exists(p) ? p : null;
     }
 
-    /// Register a custom package URL at runtime.
+    /// List all locally installed non-native packages.
+    public static IEnumerable<(string Name, string Path)> ListInstalled()
+    {
+        if (!Directory.Exists(PackagesDir)) yield break;
+        foreach (var dir in Directory.GetDirectories(PackagesDir))
+            yield return (Path.GetFileName(dir), dir);
+    }
+
+    /// Remove a cached package so it gets re-cloned on next use.
+    public static bool Remove(string name)
+    {
+        var dir = Path.Combine(PackagesDir, name);
+        if (!Directory.Exists(dir)) return false;
+        Directory.Delete(dir, recursive: true);
+        return true;
+    }
+
     public static void Register(string name, string url) => Registry[name] = url;
 }
