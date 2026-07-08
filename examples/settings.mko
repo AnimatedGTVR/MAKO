@@ -2,10 +2,10 @@ using Mako2D;
 using Inputs;
 using Audio;
 
-# FPS counter + Audio settings panel
+# FPS counter + Audio & Video settings panel
 #   F3         — toggle the FPS overlay (counter + frame-time graph)
-#   TAB        — open / close audio settings
-#   Mouse      — drag the volume sliders, click mute / test
+#   TAB        — open / close settings
+#   Mouse      — drag the volume sliders, click mute / test / FPS cap
 #
 # A coin bounces around beeping so you can hear your settings live.
 
@@ -58,7 +58,6 @@ fn button(text_label, x, y, w, h) {
 
 main() {
     Mako2D.init(WIDTH, HEIGHT, "FPS + Audio Settings");
-    Mako2D.fps(240);   # uncapped-ish so the FPS graph has something to show
 
     beep = Audio.tone("sine", 740, 0.1);
     boop = Audio.tone("triangle", 392, 0.15);
@@ -72,6 +71,12 @@ main() {
     drag_master = false;
     drag_sfx = false;
     Audio.master_volume(master_vol);
+
+    # FPS cap options (0 = uncapped)
+    caps = [30, 60, 120, 144, 240, 0];
+    cap_labels = ["30", "60", "120", "144", "240", "OFF"];
+    cap_i = 4;   # start at 240
+    Mako2D.fps(caps[cap_i]);
 
     # FPS history for the graph (last 90 frames)
     history = [];
@@ -124,12 +129,14 @@ main() {
             if fps > 0 { ms = round(1000.0 / fps * 10) / 10; }
             Mako2D.text("{ms} ms", panel_x + 130, 30, 16, Mako2D.LIGHTGRAY);
 
-            # Frame-time graph: one bar per sample, scaled against 120 fps
+            # Frame-time graph: one bar per sample, scaled to the active cap
+            graph_max = caps[cap_i];
+            if graph_max == 0 { graph_max = 480; }   # uncapped — assume high
             gx = panel_x + 12;
             gy = 100;
             i = 0;
             while i < len(history) {
-                h = clamp(history[i] / 120.0, 0, 1) * 42;
+                h = clamp(history[i] / graph_max, 0, 1) * 42;
                 bar_col = Mako2D.LIME;
                 if history[i] < 55 { bar_col = Mako2D.GOLD; }
                 if history[i] < 30 { bar_col = Mako2D.RED; }
@@ -141,9 +148,9 @@ main() {
         # ── Audio settings panel ─────────────────────────────────────────────
         if show_settings {
             px = WIDTH / 2 - 180;
-            py = 120;
-            Mako2D.rect_round(px, py, 360, 260, 0.08, 8, Mako2D.color(30, 33, 42));
-            Mako2D.text("AUDIO SETTINGS", px + 24, py + 18, 22, Mako2D.WHITE);
+            py = 90;
+            Mako2D.rect_round(px, py, 360, 348, 0.08, 8, Mako2D.color(30, 33, 42));
+            Mako2D.text("SETTINGS", px + 24, py + 18, 22, Mako2D.WHITE);
 
             r = slider("Master volume", px + 24, py + 80, 240, master_vol, drag_master);
             new_master = r[0];
@@ -172,7 +179,35 @@ main() {
                 Audio.play(boop);
             }
 
-            Mako2D.text("TAB to close", px + 24, py + 228, 14, Mako2D.GRAY);
+            # ── FPS cap ──────────────────────────────────────────────────────
+            Mako2D.text("FPS cap", px + 24, py + 238, 16, Mako2D.LIGHTGRAY);
+            i = 0;
+            while i < 6 {
+                bx = px + 24 + i * 52;
+                by = py + 262;
+                is_current = i == cap_i;
+                mx = Inputs.mouse_x();
+                my = Inputs.mouse_y();
+                hover = point_in_rect(mx, my, bx, by, 46, 30);
+
+                col = Mako2D.color(50, 54, 66);
+                if hover { col = Mako2D.color(70, 76, 92); }
+                if is_current { col = Mako2D.color(46, 92, 130); }
+                Mako2D.rect_round(bx, by, 46, 30, 0.3, 5, col);
+
+                tcol = Mako2D.LIGHTGRAY;
+                if is_current { tcol = Mako2D.WHITE; }
+                Mako2D.text(cap_labels[i], bx + 9, by + 7, 15, tcol);
+
+                if hover and Inputs.mouse_pressed("left") {
+                    cap_i = i;
+                    Mako2D.fps(caps[cap_i]);
+                    Audio.play(boop);
+                }
+                i = i + 1;
+            }
+
+            Mako2D.text("TAB to close", px + 24, py + 312, 14, Mako2D.GRAY);
         }
 
         Mako2D.end();
