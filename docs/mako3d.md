@@ -104,15 +104,21 @@ while Mako3D.running() {
 | `object_bounds(h)` | `[min_x,min_y,min_z, max_x,max_y,max_z]` — an axis-aligned box for collision, or `none` if removed |
 | `object_info(h)` | Dict with `shape,x,y,z,sx,sy,sz,rotation,color,visible,wires` — the read side of `set_object_*()`, or `none` if removed |
 | `draw_scene()` | Draw every visible spawned object — call between `begin_3d()`/`end_3d()` |
+| `save_scene(path="scene.json")` | Write every spawned object to a JSON file |
+| `load_scene(path)` | Clear the scene and respawn everything from a saved file |
 
 `set_object_scale`'s three numbers mean different things per shape:
 cube = width/height/depth, sphere = radius (first number only), cylinder =
 radius_top/radius_bottom/height, plane = width/(unused)/depth.
 
-Spawning, mutating, removing, and counting objects are pure data operations
-— they work even before a window is open, so they're fully unit-testable
-(see `tests/mako3d_scene.mko`). Only `draw_scene()` needs an active
-`begin_3d()` context.
+Spawning, mutating, removing, counting, and save/load are all pure data
+operations — they work even before a window is open, so they're fully
+unit-testable (see `tests/mako3d_scene.mko`). Only `draw_scene()` needs an
+active `begin_3d()` context.
+
+`load_scene()` reassigns handles in file order — any handles you held
+before the call (including a current selection) are no longer valid, so
+drop them (e.g. `selected = none`) after loading.
 
 Collision helpers for 3D scenes:
 

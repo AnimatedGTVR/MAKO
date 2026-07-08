@@ -13,6 +13,7 @@ using MakoUI;
 #   WASD/arrows fly, Q/E up/down, middle mouse orbit, scroll zoom
 #   Left click an object to select it — edit its live properties in the
 #   Inspector's "Selected" tab, or recolor it with the toolbar swatches.
+#   Save/Load in the toolbar round-trip the whole scene through scene.json.
 
 const COLORS = [
     [230, 70, 70, 255],    # red
@@ -56,6 +57,7 @@ main() {
     show_inspector = true;
     quit = false;
     selected = none;
+    status = "";
 
     t = 0;
 
@@ -160,6 +162,28 @@ main() {
         MakoUI.same_line();
         MakoUI.separator();
         MakoUI.same_line();
+
+        if MakoUI.button("Save") {
+            Mako3D.save_scene("scene.json");
+            status = "Saved {Mako3D.object_count()} objects to scene.json";
+        }
+        MakoUI.tooltip("Save every spawned object to scene.json");
+
+        MakoUI.same_line();
+        if MakoUI.button("Load") {
+            try {
+                Mako3D.load_scene("scene.json");
+                selected = none;   # old handles no longer valid after reload
+                status = "Loaded {Mako3D.object_count()} objects from scene.json";
+            } catch err {
+                status = "Load failed: {err}";
+            }
+        }
+        MakoUI.tooltip("Load scene.json (replaces the current scene)");
+
+        MakoUI.same_line();
+        MakoUI.separator();
+        MakoUI.same_line();
         MakoUI.fps_counter();
 
         MakoUI.end_window();
@@ -178,6 +202,10 @@ main() {
                     MakoUI.text("Camera: WASD fly, MMB orbit, wheel zoom");
                     MakoUI.text("Objects: {Mako3D.object_count()}");
                     MakoUI.text("Click an object to select it");
+                    if status != "" {
+                        MakoUI.separator();
+                        MakoUI.text_colored(status, 0.6, 0.9, 0.6, 1.0);
+                    }
                     MakoUI.end_tab_item();
                 }
 

@@ -77,5 +77,38 @@ main() {
     Mako3D.clear_objects();
     assert(Mako3D.object_count() == 0, "clear_objects empties the scene");
 
+    # ── save_scene / load_scene round-trip ───────────────────────────────────
+    Mako3D.clear_objects();
+    cube2 = Mako3D.spawn_cube(1, 2, 3,  4, 5, 6, Mako3D.RED);
+    Mako3D.set_object_rotation(cube2, 45);
+    sphere2 = Mako3D.spawn_sphere(-2, 0, 0,  1.5, Mako3D.BLUE);
+    Mako3D.set_object_visible(sphere2, false);
+
+    Mako3D.save_scene("/tmp/mako_scene_test.json");
+    Mako3D.clear_objects();
+    assert(Mako3D.object_count() == 0, "cleared before reload");
+
+    Mako3D.load_scene("/tmp/mako_scene_test.json");
+    assert(Mako3D.object_count() == 2, "load_scene restores every object");
+
+    info0 = Mako3D.object_info(0);
+    assert(info0["shape"] == "cube", "load_scene restores shape");
+    assert(abs(info0["x"] - 1) < 0.001, "load_scene restores position");
+    assert(abs(info0["sy"] - 5) < 0.001, "load_scene restores scale");
+    assert(abs(info0["rotation"] - 45) < 0.001, "load_scene restores rotation");
+    assert(info0["color"][0] == Mako3D.RED[0], "load_scene restores color");
+
+    info1 = Mako3D.object_info(1);
+    assert(info1["shape"] == "sphere", "load_scene restores second object's shape");
+    assert(info1["visible"] == false, "load_scene restores visibility");
+
+    caught = false;
+    try { Mako3D.load_scene("/tmp/does_not_exist_xyz.json"); }
+    catch err { caught = true; }
+    assert(caught, "load_scene on a missing file is a catchable error");
+
+    delete("/tmp/mako_scene_test.json");
+    Mako3D.clear_objects();
+
     print "Mako3D scene tests pass!";
 }

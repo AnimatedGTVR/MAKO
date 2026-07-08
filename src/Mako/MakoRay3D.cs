@@ -540,6 +540,85 @@ static class MakoRay3D
         };
     }
 
+    private static ObjShape ShapeFromName(string s) => s switch
+    {
+        "sphere" => ObjShape.Sphere, "cylinder" => ObjShape.Cylinder,
+        "plane"  => ObjShape.Plane,  _          => ObjShape.Cube,
+    };
+
+    private static double JNum(Dictionary<string, object?> d, string key, double def = 0)
+    {
+        if (!d.TryGetValue(key, out var v) || v is null) return def;
+        return v switch
+        {
+            double dd => dd, bool b => b ? 1 : 0,
+            string s when double.TryParse(s, out var r) => r,
+            _ => def,
+        };
+    }
+
+    /// save_scene(path="scene.json") — write every currently spawned object
+    /// (in the same shape as object_info()) to a JSON file.
+    public static object? SaveScene(List<object?> a)
+    {
+        string path = a.Count > 0 ? a[0]?.ToString() ?? "scene.json" : "scene.json";
+        var list = new List<object?>();
+        foreach (var o in _objects)
+        {
+            if (o is null) continue;
+            list.Add(new Dictionary<string, object?>
+            {
+                ["shape"] = ShapeName(o.Shape),
+                ["x"] = (double)o.Pos.X, ["y"] = (double)o.Pos.Y, ["z"] = (double)o.Pos.Z,
+                ["sx"] = (double)o.Scale.X, ["sy"] = (double)o.Scale.Y, ["sz"] = (double)o.Scale.Z,
+                ["rotation"] = (double)o.RotationY,
+                ["color"] = ColorList(o.Tint),
+                ["visible"] = o.Visible,
+                ["wires"] = o.Wires,
+            });
+        }
+        File.WriteAllText(path, Json.Encode(list));
+        return null;
+    }
+
+    /// load_scene(path) — clear the current scene and respawn every object
+    /// from a file written by save_scene(). Handles are reassigned in file
+    /// order; any handles you held from before are no longer valid.
+    public static object? LoadScene(List<object?> a)
+    {
+        string path = a.Count > 0 ? a[0]?.ToString() ?? "" : "";
+        if (!File.Exists(path))
+            throw new MakoError($"Mako3D.load_scene(): file not found: '{path}'");
+        if (Json.Decode(File.ReadAllText(path)) is not List<object?> list)
+            throw new MakoError("Mako3D.load_scene(): malformed scene file (expected a JSON array)");
+
+        _objects.Clear();
+        foreach (var item in list)
+        {
+            if (item is not Dictionary<string, object?> d) continue;
+            var color = d.GetValueOrDefault("color") is List<object?> c && c.Count >= 3
+                ? new Color((byte)ToD(c[0]), (byte)ToD(c[1]), (byte)ToD(c[2]), c.Count > 3 ? (byte)ToD(c[3]) : (byte)255)
+                : Color.White;
+            _objects.Add(new SceneObject
+            {
+                Shape     = ShapeFromName(d.GetValueOrDefault("shape") as string ?? "cube"),
+                Pos       = new Vector3((float)JNum(d, "x"), (float)JNum(d, "y"), (float)JNum(d, "z")),
+                Scale     = new Vector3((float)JNum(d, "sx", 1), (float)JNum(d, "sy", 1), (float)JNum(d, "sz", 1)),
+                RotationY = (float)JNum(d, "rotation"),
+                Tint      = color,
+                Visible   = d.GetValueOrDefault("visible") is not false,
+                Wires     = d.GetValueOrDefault("wires") is not false,
+            });
+        }
+        return null;
+    }
+
+    private static double ToD(object? v) => v switch
+    {
+        double d => d, bool b => b ? 1 : 0,
+        string s when double.TryParse(s, out var r) => r, _ => 0,
+    };
+
     public static object? SetObjectVisible(List<object?> a)
     {
         var o = GetObj(a); if (o is null) return null;
@@ -751,6 +830,8 @@ static class MakoRay3D
         ["object_count"]       = ObjectCount,
         ["object_bounds"]      = ObjectBounds,
         ["object_info"]        = ObjectInfo,
+        ["save_scene"]         = SaveScene,
+        ["load_scene"]         = LoadScene,
         ["draw_scene"]         = DrawScene,
         ["pick_object"]        = PickObject,
     };
