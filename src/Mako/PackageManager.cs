@@ -8,7 +8,7 @@ static class PackageManager
 
     // Native packages are built into the interpreter — no files to clone.
     public static readonly HashSet<string> NativePackages =
-        new(StringComparer.OrdinalIgnoreCase) { "MakoUI", "IMGUI", "MakoRay", "Mako2D", "Mako3D", "Inputs" };
+        new(StringComparer.OrdinalIgnoreCase) { "MakoUI", "IMGUI", "MakoRay", "Mako2D", "Mako3D", "Inputs", "Audio" };
 
     // Public registry: name → clone URL. Populated by 'using Name from "..."' or built-in list.
     private static readonly Dictionary<string, string> Registry =

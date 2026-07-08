@@ -293,6 +293,7 @@ static class MakoRay3D
     public static object? LoadModelFile(List<object?> a)
     {
         string path = a.Count > 0 ? a[0]?.ToString() ?? "" : "";
+        path = MakoAssets.Resolve(path);
         if (!File.Exists(path))
             throw new MakoError($"Mako3D.load_model(): file not found: '{path}'");
         var m = Raylib.LoadModel(path);

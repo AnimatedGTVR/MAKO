@@ -24,6 +24,7 @@ class Interpreter
     private bool    _ray2DActive;
     private bool    _ray3DActive;
     private bool    _inputsActive;
+    private bool    _audioActive;
 
     // Each scope holds variable values and a set of const names.
     private sealed class Scope
@@ -48,9 +49,10 @@ class Interpreter
             bool hadWindow = _rayActive || _ray2DActive || _ray3DActive;
             if (_ray2DActive) MakoRay2D.UnloadAll();
             if (_ray3DActive) MakoRay3D.UnloadAll();
+            if (_audioActive) MakoAudio.UnloadAll();
             if (hadWindow && Raylib_cs.Raylib.IsWindowReady())
                 Raylib_cs.Raylib.CloseWindow();
-            _rayActive = _ray2DActive = _ray3DActive = false;
+            _rayActive = _ray2DActive = _ray3DActive = _audioActive = false;
         }
     }
 
@@ -86,6 +88,8 @@ class Interpreter
 
     private void ExecuteCore(ProgramNode program, string baseDir)
     {
+        MakoAssets.BaseDir = baseDir;
+
         // ── using PackageName [from "source"] — named packages ───────────────
         foreach (var pkg in program.Packages)
         {
@@ -123,6 +127,9 @@ class Interpreter
 
                 if (pkg.Name.Equals("Inputs", StringComparison.OrdinalIgnoreCase))
                     _inputsActive = true;
+
+                if (pkg.Name.Equals("Audio", StringComparison.OrdinalIgnoreCase))
+                    _audioActive = true;
 
                 continue;
             }
@@ -1218,6 +1225,14 @@ class Interpreter
                     if (MakoInputs.Funcs.TryGetValue(fnI, out var fnIn))
                         { result = fnIn(args); return true; }
                     throw new MakoError($"Inputs.{fnI}() wasn't found");
+                }
+                if (name.StartsWith("Audio.", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!_audioActive) throw new MakoError($"{name}() requires 'using Audio;'");
+                    var fnA = name["Audio.".Length..];
+                    if (MakoAudio.Funcs.TryGetValue(fnA, out var fnAu))
+                        { result = fnAu(args); return true; }
+                    throw new MakoError($"Audio.{fnA}() wasn't found");
                 }
                 return false;
         }

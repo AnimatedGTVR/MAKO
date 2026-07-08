@@ -67,6 +67,7 @@ static class MakoRay2D
     public static object? Load(List<object?> a)
     {
         string path = a.Count > 0 ? a[0]?.ToString() ?? "" : "";
+        path = MakoAssets.Resolve(path);
         if (!File.Exists(path))
             throw new MakoError($"Mako2D.load(): file not found: '{path}'");
         var tex = Raylib.LoadTexture(path);
