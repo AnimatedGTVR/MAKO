@@ -21,7 +21,18 @@ namespace Mako;
 ///
 static class MakoAudio
 {
-    private static readonly List<Sound> _sounds = [];
+    /// A sound with a pool of alias voices so overlapping plays mix instead of
+    /// restarting each other (raylib's PlaySound restarts the same handle).
+    private sealed class Voice
+    {
+        public Sound Base;
+        public Sound[] Pool = new Sound[VoicesPerSound];
+        public int Next;
+        public float Vol = 1f, Pitch = 1f, Pan = 0.5f;
+    }
+
+    private const int VoicesPerSound = 8;
+    private static readonly List<Voice> _sounds = [];
     private static readonly List<Music> _music  = [];
     private static bool _deviceReady;
 
@@ -30,6 +41,34 @@ static class MakoAudio
         if (_deviceReady) return;
         Raylib.InitAudioDevice();
         _deviceReady = true;
+    }
+
+    private static object? Register(Sound s)
+    {
+        var v = new Voice { Base = s };
+        for (int i = 0; i < VoicesPerSound; i++)
+            v.Pool[i] = Raylib.LoadSoundAlias(s);
+        _sounds.Add(v);
+        return (object?)(double)(_sounds.Count - 1);
+    }
+
+    /// Pick a free voice (or the oldest) and apply current settings.
+    private static Sound NextVoice(Voice v, float? pan = null, float? vol = null)
+    {
+        int pick = -1;
+        for (int i = 0; i < VoicesPerSound; i++)
+        {
+            int idx = (v.Next + i) % VoicesPerSound;
+            if (!Raylib.IsSoundPlaying(v.Pool[idx])) { pick = idx; break; }
+        }
+        if (pick < 0) pick = v.Next;                 // all busy → steal round-robin
+        v.Next = (pick + 1) % VoicesPerSound;
+
+        var snd = v.Pool[pick];
+        Raylib.SetSoundVolume(snd, vol ?? v.Vol);
+        Raylib.SetSoundPitch(snd, v.Pitch);
+        Raylib.SetSoundPan(snd, pan ?? v.Pan);
+        return snd;
     }
 
     // ── Sounds (short effects, fully loaded in memory) ────────────────────────
@@ -42,65 +81,68 @@ static class MakoAudio
         path = MakoAssets.Resolve(path);
         if (!File.Exists(path))
             throw new MakoError($"Audio.load(): file not found: '{path}'");
-        _sounds.Add(Raylib.LoadSound(path));
-        return (object?)(double)(_sounds.Count - 1);
+        return Register(Raylib.LoadSound(path));
     }
 
     public static object? Play(List<object?> a)
     {
-        var s = GetSound(a); if (s is null) return null;
-        Raylib.PlaySound(s.Value);
+        var v = GetSound(a); if (v is null) return null;
+        Raylib.PlaySound(NextVoice(v));
         return null;
     }
 
     public static object? Stop(List<object?> a)
     {
-        var s = GetSound(a); if (s is null) return null;
-        Raylib.StopSound(s.Value);
+        var v = GetSound(a); if (v is null) return null;
+        foreach (var s in v.Pool)
+            if (Raylib.IsSoundPlaying(s)) Raylib.StopSound(s);
         return null;
     }
 
     public static object? Pause(List<object?> a)
     {
-        var s = GetSound(a); if (s is null) return null;
-        Raylib.PauseSound(s.Value);
+        var v = GetSound(a); if (v is null) return null;
+        foreach (var s in v.Pool)
+            if (Raylib.IsSoundPlaying(s)) Raylib.PauseSound(s);
         return null;
     }
 
     public static object? Resume(List<object?> a)
     {
-        var s = GetSound(a); if (s is null) return null;
-        Raylib.ResumeSound(s.Value);
+        var v = GetSound(a); if (v is null) return null;
+        foreach (var s in v.Pool) Raylib.ResumeSound(s);
         return null;
     }
 
     public static object? Playing(List<object?> a)
     {
-        var s = GetSound(a); if (s is null) return (object?)false;
-        return (object?)(bool)Raylib.IsSoundPlaying(s.Value);
+        var v = GetSound(a); if (v is null) return (object?)false;
+        foreach (var s in v.Pool)
+            if (Raylib.IsSoundPlaying(s)) return (object?)true;
+        return (object?)false;
     }
 
     /// volume(handle, 0.0–1.0)
     public static object? Volume(List<object?> a)
     {
-        var s = GetSound(a); if (s is null) return null;
-        Raylib.SetSoundVolume(s.Value, a.Count > 1 ? (float)Convert.ToDouble(a[1]) : 1f);
+        var v = GetSound(a); if (v is null) return null;
+        v.Vol = a.Count > 1 ? (float)Convert.ToDouble(a[1]) : 1f;
         return null;
     }
 
     /// pitch(handle, 1.0 = normal)
     public static object? Pitch(List<object?> a)
     {
-        var s = GetSound(a); if (s is null) return null;
-        Raylib.SetSoundPitch(s.Value, a.Count > 1 ? (float)Convert.ToDouble(a[1]) : 1f);
+        var v = GetSound(a); if (v is null) return null;
+        v.Pitch = a.Count > 1 ? (float)Convert.ToDouble(a[1]) : 1f;
         return null;
     }
 
     /// pan(handle, 0.0 = left, 0.5 = center, 1.0 = right)
     public static object? Pan(List<object?> a)
     {
-        var s = GetSound(a); if (s is null) return null;
-        Raylib.SetSoundPan(s.Value, a.Count > 1 ? (float)Convert.ToDouble(a[1]) : 0.5f);
+        var v = GetSound(a); if (v is null) return null;
+        v.Pan = 1f - (a.Count > 1 ? (float)Convert.ToDouble(a[1]) : 0.5f);
         return null;
     }
 
@@ -293,9 +335,9 @@ static class MakoAudio
     {
         var bytes = BuildWav(samples);
         var wave  = Raylib.LoadWaveFromMemory(".wav", bytes);
-        _sounds.Add(Raylib.LoadSoundFromWave(wave));
+        var snd   = Raylib.LoadSoundFromWave(wave);
         Raylib.UnloadWave(wave);
-        return (object?)(double)(_sounds.Count - 1);
+        return Register(snd);
     }
 
     private static byte[] BuildWav(float[] samples, int rate = SampleRate)
@@ -320,7 +362,7 @@ static class MakoAudio
     /// the centre of the window (the "listener").
     public static object? PlayAt(List<object?> a)
     {
-        var s = GetSound(a); if (s is null) return null;
+        var v = GetSound(a); if (v is null) return null;
         double x = a.Count > 1 ? Convert.ToDouble(a[1]) : 0;
         double y = a.Count > 2 ? Convert.ToDouble(a[2]) : 0;
 
@@ -333,9 +375,8 @@ static class MakoAudio
         double maxd = Math.Sqrt(cx * cx + cy * cy);
         float vol  = (float)Math.Clamp(1.0 - 0.7 * (dist / Math.Max(maxd, 1)), 0.1, 1.0);
 
-        Raylib.SetSoundPan(s.Value, 1f - pan);   // raylib pan: 1 = left, 0 = right
-        Raylib.SetSoundVolume(s.Value, vol);
-        Raylib.PlaySound(s.Value);
+        // raylib pan: 1 = left, 0 = right
+        Raylib.PlaySound(NextVoice(v, pan: 1f - pan, vol: vol * v.Vol));
         return null;
     }
 
@@ -343,7 +384,7 @@ static class MakoAudio
     /// off with distance, panning from the listener-relative X offset.
     public static object? Play3D(List<object?> a)
     {
-        var s = GetSound(a); if (s is null) return null;
+        var v = GetSound(a); if (v is null) return null;
         double sx = Cv(a, 1), sy = Cv(a, 2), sz = Cv(a, 3);
         double lx = Cv(a, 4), ly = Cv(a, 5), lz = Cv(a, 6);
 
@@ -355,9 +396,7 @@ static class MakoAudio
             ? (float)Math.Clamp(0.5 + 0.5 * (dx / dist), 0.05, 0.95)
             : 0.5f;
 
-        Raylib.SetSoundPan(s.Value, 1f - pan);
-        Raylib.SetSoundVolume(s.Value, vol);
-        Raylib.PlaySound(s.Value);
+        Raylib.PlaySound(NextVoice(v, pan: 1f - pan, vol: vol * v.Vol));
         return null;
     }
 
@@ -378,8 +417,12 @@ static class MakoAudio
 
     public static void UnloadAll()
     {
-        foreach (var s in _sounds) Raylib.UnloadSound(s);
-        foreach (var m in _music)  Raylib.UnloadMusicStream(m);
+        foreach (var v in _sounds)
+        {
+            foreach (var alias in v.Pool) Raylib.UnloadSoundAlias(alias);
+            Raylib.UnloadSound(v.Base);
+        }
+        foreach (var m in _music) Raylib.UnloadMusicStream(m);
         _sounds.Clear();
         _music.Clear();
         if (_deviceReady) { Raylib.CloseAudioDevice(); _deviceReady = false; }
@@ -387,7 +430,7 @@ static class MakoAudio
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static Sound? GetSound(List<object?> a)
+    private static Voice? GetSound(List<object?> a)
     {
         int id = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : -1;
         return id >= 0 && id < _sounds.Count ? _sounds[id] : null;
