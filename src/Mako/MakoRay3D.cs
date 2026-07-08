@@ -382,6 +382,222 @@ static class MakoRay3D
     public static readonly Dictionary<string, object?> Colors = MakoRay.Colors
         .ToDictionary(kv => kv.Key, kv => kv.Value);
 
+    // ── Scene / objects ───────────────────────────────────────────────────────
+    //
+    // A small retained-mode layer over the immediate-mode draw calls above:
+    // spawn_*() registers an object once; draw_scene() draws everything that's
+    // still registered, every frame, so you stop hand-writing a cube() call
+    // per object per frame. Objects are plain data (position, scale, Y-axis
+    // rotation, color, visibility) — set_object_*() mutates them in place.
+
+    private enum ObjShape { Cube, Sphere, Cylinder, Plane }
+
+    private sealed class SceneObject
+    {
+        public ObjShape Shape;
+        public Vector3  Pos;
+        // Meaning of Scale depends on Shape:
+        //   Cube:     X,Y,Z = width, height, depth
+        //   Sphere:   X     = radius
+        //   Cylinder: X,Y,Z = radius_top, radius_bottom, height
+        //   Plane:    X,Z   = width, depth
+        public Vector3 Scale = Vector3.One;
+        public float   RotationY;   // degrees — Y-axis only, for v1
+        public Color   Tint = Color.White;
+        public bool    Visible = true;
+        public bool    Wires = true;
+    }
+
+    private static readonly List<SceneObject?> _objects = [];
+
+    public static object? SpawnCube(List<object?> a)
+    {
+        var obj = new SceneObject
+        {
+            Shape = ObjShape.Cube,
+            Pos   = Vec3(a, 0),
+            Scale = new Vector3(a.Count > 3 ? (float)Convert.ToDouble(a[3]) : 1,
+                                 a.Count > 4 ? (float)Convert.ToDouble(a[4]) : 1,
+                                 a.Count > 5 ? (float)Convert.ToDouble(a[5]) : 1),
+            Tint  = a.Count > 6 ? MakoRay.ToColor(a[6]) : Color.White,
+        };
+        _objects.Add(obj);
+        return (object?)(double)(_objects.Count - 1);
+    }
+
+    public static object? SpawnSphere(List<object?> a)
+    {
+        var obj = new SceneObject
+        {
+            Shape = ObjShape.Sphere,
+            Pos   = Vec3(a, 0),
+            Scale = new Vector3(a.Count > 3 ? (float)Convert.ToDouble(a[3]) : 1, 0, 0),
+            Tint  = a.Count > 4 ? MakoRay.ToColor(a[4]) : Color.White,
+        };
+        _objects.Add(obj);
+        return (object?)(double)(_objects.Count - 1);
+    }
+
+    public static object? SpawnCylinder(List<object?> a)
+    {
+        var obj = new SceneObject
+        {
+            Shape = ObjShape.Cylinder,
+            Pos   = Vec3(a, 0),
+            Scale = new Vector3(a.Count > 3 ? (float)Convert.ToDouble(a[3]) : 1,
+                                 a.Count > 4 ? (float)Convert.ToDouble(a[4]) : 1,
+                                 a.Count > 5 ? (float)Convert.ToDouble(a[5]) : 2),
+            Tint  = a.Count > 6 ? MakoRay.ToColor(a[6]) : Color.White,
+        };
+        _objects.Add(obj);
+        return (object?)(double)(_objects.Count - 1);
+    }
+
+    public static object? SpawnPlane(List<object?> a)
+    {
+        var obj = new SceneObject
+        {
+            Shape = ObjShape.Plane,
+            Pos   = Vec3(a, 0),
+            Scale = new Vector3(a.Count > 3 ? (float)Convert.ToDouble(a[3]) : 10, 0,
+                                 a.Count > 4 ? (float)Convert.ToDouble(a[4]) : 10),
+            Tint  = a.Count > 5 ? MakoRay.ToColor(a[5]) : Color.White,
+        };
+        _objects.Add(obj);
+        return (object?)(double)(_objects.Count - 1);
+    }
+
+    private static SceneObject? GetObj(List<object?> a, int i = 0)
+    {
+        int id = a.Count > i ? (int)Convert.ToDouble(a[i]) : -1;
+        return id >= 0 && id < _objects.Count ? _objects[id] : null;
+    }
+
+    public static object? SetObjectPos(List<object?> a)
+    {
+        var o = GetObj(a); if (o is null) return null;
+        o.Pos = Vec3(a, 1);
+        return null;
+    }
+
+    public static object? SetObjectColor(List<object?> a)
+    {
+        var o = GetObj(a); if (o is null) return null;
+        if (a.Count > 1) o.Tint = MakoRay.ToColor(a[1]);
+        return null;
+    }
+
+    public static object? SetObjectScale(List<object?> a)
+    {
+        var o = GetObj(a); if (o is null) return null;
+        o.Scale = Vec3(a, 1);
+        return null;
+    }
+
+    /// set_object_rotation(handle, degrees) — rotation around the Y axis only.
+    public static object? SetObjectRotation(List<object?> a)
+    {
+        var o = GetObj(a); if (o is null) return null;
+        if (a.Count > 1) o.RotationY = (float)Convert.ToDouble(a[1]);
+        return null;
+    }
+
+    public static object? SetObjectVisible(List<object?> a)
+    {
+        var o = GetObj(a); if (o is null) return null;
+        if (a.Count > 1) o.Visible = a[1] switch { bool b => b, double d => d != 0, _ => true };
+        return null;
+    }
+
+    public static object? SetObjectWires(List<object?> a)
+    {
+        var o = GetObj(a); if (o is null) return null;
+        if (a.Count > 1) o.Wires = a[1] switch { bool b => b, double d => d != 0, _ => true };
+        return null;
+    }
+
+    public static object? RemoveObject(List<object?> a)
+    {
+        int id = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : -1;
+        if (id >= 0 && id < _objects.Count) _objects[id] = null;
+        return null;
+    }
+
+    public static object? ClearObjects(List<object?> _)
+    {
+        _objects.Clear();
+        return null;
+    }
+
+    public static object? ObjectCount(List<object?> _) =>
+        (object?)(double)_objects.Count(o => o != null);
+
+    /// object_bounds(handle) → [min_x,min_y,min_z, max_x,max_y,max_z] — an
+    /// axis-aligned box around the object, ignoring rotation. Feed into
+    /// box3d_overlap()/dist() for simple 3D collision against other objects.
+    public static object? ObjectBounds(List<object?> a)
+    {
+        var o = GetObj(a);
+        if (o is null) return null;
+        Vector3 half = o.Shape switch
+        {
+            ObjShape.Cube     => o.Scale / 2f,
+            ObjShape.Sphere   => new Vector3(o.Scale.X, o.Scale.X, o.Scale.X),
+            ObjShape.Cylinder => new Vector3(Math.Max(o.Scale.X, o.Scale.Y), o.Scale.Z / 2f, Math.Max(o.Scale.X, o.Scale.Y)),
+            ObjShape.Plane    => new Vector3(o.Scale.X / 2f, 0.01f, o.Scale.Z / 2f),
+            _                 => Vector3.One,
+        };
+        var min = o.Pos - half;
+        var max = o.Pos + half;
+        return new List<object?>
+        {
+            (object?)(double)min.X, (double)min.Y, (double)min.Z,
+            (double)max.X, (double)max.Y, (double)max.Z,
+        };
+    }
+
+    /// draw_scene() — call between begin_3d()/end_3d(). Draws every object
+    /// spawned with spawn_cube/spawn_sphere/spawn_cylinder/spawn_plane at its
+    /// current position/scale/rotation/color.
+    public static object? DrawScene(List<object?> _)
+    {
+        foreach (var o in _objects)
+        {
+            if (o is null || !o.Visible) continue;
+
+            bool rotated = Math.Abs(o.RotationY) > 0.001f;
+            if (rotated)
+            {
+                Rlgl.PushMatrix();
+                Rlgl.Translatef(o.Pos.X, o.Pos.Y, o.Pos.Z);
+                Rlgl.Rotatef(o.RotationY, 0, 1, 0);
+            }
+            var pos = rotated ? Vector3.Zero : o.Pos;
+
+            switch (o.Shape)
+            {
+                case ObjShape.Cube:
+                    Raylib.DrawCube(pos, o.Scale.X, o.Scale.Y, o.Scale.Z, o.Tint);
+                    if (o.Wires) Raylib.DrawCubeWires(pos, o.Scale.X, o.Scale.Y, o.Scale.Z, Color.Black);
+                    break;
+                case ObjShape.Sphere:
+                    Raylib.DrawSphere(pos, o.Scale.X, o.Tint);
+                    if (o.Wires) Raylib.DrawSphereWires(pos, o.Scale.X, 8, 8, Color.Black);
+                    break;
+                case ObjShape.Cylinder:
+                    Raylib.DrawCylinder(pos, o.Scale.X, o.Scale.Y, o.Scale.Z, 16, o.Tint);
+                    if (o.Wires) Raylib.DrawCylinderWires(pos, o.Scale.X, o.Scale.Y, o.Scale.Z, 16, Color.Black);
+                    break;
+                case ObjShape.Plane:
+                    Raylib.DrawPlane(pos, new Vector2(o.Scale.X, o.Scale.Z), o.Tint);
+                    break;
+            }
+
+            if (rotated) Rlgl.PopMatrix();
+        }
+        return null;
+    }
+
     // ── Cleanup ───────────────────────────────────────────────────────────────
 
     public static void UnloadAll()
@@ -392,7 +608,7 @@ static class MakoRay3D
             foreach (var m in _models)  Raylib.UnloadModel(m);
             foreach (var t in _textures) Raylib.UnloadTexture(t);
         }
-        _models.Clear(); _textures.Clear(); _cameras.Clear();
+        _models.Clear(); _textures.Clear(); _cameras.Clear(); _objects.Clear();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -444,5 +660,21 @@ static class MakoRay3D
         ["mouse_wheel"]  = MouseWheel,
         ["hide_cursor"]  = HideCursor,    ["show_cursor"]  = ShowCursor,
         ["color"]        = MakeColor,     ["fade"]         = Fade,
+        // Scene / objects
+        ["spawn_cube"]         = SpawnCube,
+        ["spawn_sphere"]       = SpawnSphere,
+        ["spawn_cylinder"]     = SpawnCylinder,
+        ["spawn_plane"]        = SpawnPlane,
+        ["set_object_pos"]     = SetObjectPos,
+        ["set_object_color"]   = SetObjectColor,
+        ["set_object_scale"]   = SetObjectScale,
+        ["set_object_rotation"]= SetObjectRotation,
+        ["set_object_visible"] = SetObjectVisible,
+        ["set_object_wires"]   = SetObjectWires,
+        ["remove_object"]      = RemoveObject,
+        ["clear_objects"]      = ClearObjects,
+        ["object_count"]       = ObjectCount,
+        ["object_bounds"]      = ObjectBounds,
+        ["draw_scene"]         = DrawScene,
     };
 }

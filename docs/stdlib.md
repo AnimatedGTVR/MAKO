@@ -32,8 +32,10 @@ Every builtin, always available — no imports needed.
 
 | Function | Description |
 |---|---|
-| `dist(x1, y1, x2, y2)` | Distance between two points |
-| `rects_overlap(x1,y1,w1,h1, x2,y2,w2,h2)` | AABB overlap test |
+| `dist(x1, y1, x2, y2)` | Distance between two 2D points |
+| `dist3d(x1,y1,z1, x2,y2,z2)` | Distance between two 3D points |
+| `rects_overlap(x1,y1,w1,h1, x2,y2,w2,h2)` | 2D AABB overlap test |
+| `box3d_overlap(min1,max1, min2,max2)` (6 args each, min/max form) | 3D AABB overlap test — matches `Mako3D.object_bounds()`'s output |
 | `circles_overlap(x1,y1,r1, x2,y2,r2)` | Circle overlap test |
 | `point_in_rect(px,py, x,y,w,h)` | Point inside rectangle? |
 

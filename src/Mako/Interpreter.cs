@@ -621,7 +621,7 @@ class Interpreter
         "type", "to_num", "to_str", "exit", "assert",
         "abs", "floor", "ceil", "sqrt", "round", "pow", "max", "min", "range",
         "clamp", "lerp", "sign", "sin", "cos", "tan", "atan2", "pi",
-        "dist", "rects_overlap", "circles_overlap", "point_in_rect", "slice",
+        "dist", "dist3d", "rects_overlap", "circles_overlap", "box3d_overlap", "point_in_rect", "slice",
         "find_path", "line_of_sight",
         "args", "json_encode", "json_decode",
         "len", "upper", "lower", "trim", "contains", "starts_with", "ends_with",
@@ -779,6 +779,28 @@ class Interpreter
                 double rx = AsNum(name, args[2]), ry = AsNum(name, args[3]);
                 result = px >= rx && px <= rx + AsNum(name, args[4])
                       && py >= ry && py <= ry + AsNum(name, args[5]);
+                return true;
+            }
+            case "dist3d": RequireArity(name, args, 6);
+            {
+                double dxx = AsNum(name, args[3]) - AsNum(name, args[0]);
+                double dyy = AsNum(name, args[4]) - AsNum(name, args[1]);
+                double dzz = AsNum(name, args[5]) - AsNum(name, args[2]);
+                result = Math.Sqrt(dxx * dxx + dyy * dyy + dzz * dzz); return true;
+            }
+            // box3d_overlap(min1_x,min1_y,min1_z, max1_x,max1_y,max1_z,
+            //               min2_x,min2_y,min2_z, max2_x,max2_y,max2_z) —
+            // takes two boxes already in min/max form, matching what
+            // Mako3D.object_bounds() returns.
+            case "box3d_overlap": RequireArity(name, args, 12);
+            {
+                double aMinX = AsNum(name, args[0]), aMinY = AsNum(name, args[1]), aMinZ = AsNum(name, args[2]);
+                double aMaxX = AsNum(name, args[3]), aMaxY = AsNum(name, args[4]), aMaxZ = AsNum(name, args[5]);
+                double bMinX = AsNum(name, args[6]), bMinY = AsNum(name, args[7]), bMinZ = AsNum(name, args[8]);
+                double bMaxX = AsNum(name, args[9]), bMaxY = AsNum(name, args[10]), bMaxZ = AsNum(name, args[11]);
+                result = aMinX < bMaxX && aMaxX > bMinX
+                      && aMinY < bMaxY && aMaxY > bMinY
+                      && aMinZ < bMaxZ && aMaxZ > bMinZ;
                 return true;
             }
 

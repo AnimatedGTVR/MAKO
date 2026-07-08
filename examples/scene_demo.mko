@@ -1,0 +1,88 @@
+using Mako3D;
+using Inputs;
+
+# Mako3D's scene/object system — spawn objects once, then just call
+# draw_scene() every frame instead of hand-writing a draw call per object.
+#
+#   spawn_cube/spawn_sphere/spawn_cylinder/spawn_plane(...) -> handle
+#   set_object_pos/color/scale/rotation/visible/wires(handle, ...)
+#   remove_object(handle)   object_count()   object_bounds(handle)
+#   draw_scene()            <- draws everything currently spawned
+#
+#   WASD/arrows fly, Q/E up/down, middle mouse orbit, scroll zoom
+#   SPACE toggles the wireframe on the orbiting sphere
+#   R removes a random cube from the grid
+
+main() {
+    Mako3D.init(1000, 680, "Mako3D Scene Demo");
+    Mako3D.fps(60);
+
+    cam = Mako3D.camera(14, 12, 14,  0, 0, 0);
+
+    # Ground
+    Mako3D.spawn_plane(0, 0, 0,  24, 24, Mako3D.color(40, 42, 50));
+
+    # A grid of cubes — spawned once, never touched again except via handles
+    grid_handles = [];
+    gx = 0 - 3;
+    while gx <= 3 {
+        gz = 0 - 3;
+        while gz <= 3 {
+            if abs(gx) + abs(gz) > 2 {
+                h = Mako3D.spawn_cube(gx * 2.2, 0.5, gz * 2.2,  1, 1, 1,
+                                       Mako3D.color(80 + (gx + 3) * 20, 100, 120 + (gz + 3) * 15));
+                push(grid_handles, h);
+            }
+            gz = gz + 1;
+        }
+        gx = gx + 1;
+    }
+
+    # A rotating cylinder "pillar"
+    pillar = Mako3D.spawn_cylinder(0, 1.5, 0,  0.6, 0.9, 3, Mako3D.GOLD);
+
+    # An orbiting sphere we move every frame by handle
+    orbiter = Mako3D.spawn_sphere(6, 2, 0,  0.8, Mako3D.SKYBLUE);
+
+    print "spawned {Mako3D.object_count()} objects";
+
+    t = 0;
+    wires_on = true;
+
+    while Mako3D.running() {
+        dt = Mako3D.delta();
+        t = t + dt;
+        Mako3D.update_camera(cam, 10);
+
+        # Mutate spawned objects by handle — no need to re-specify shape/color
+        Mako3D.set_object_rotation(pillar, t * 40);
+        Mako3D.set_object_pos(orbiter, cos(t) * 6, 2 + sin(t * 2) * 0.5, sin(t) * 6);
+
+        if Inputs.key_pressed("SPACE") {
+            wires_on = not wires_on;
+            Mako3D.set_object_wires(orbiter, wires_on);
+        }
+
+        if Inputs.key_pressed("R") and len(grid_handles) > 0 {
+            victim = grid_handles[random_int(0, len(grid_handles) - 1)];
+            Mako3D.remove_object(victim);
+            grid_handles = filter(grid_handles, fn(h) => h != victim);
+        }
+
+        Mako3D.begin();
+        Mako3D.clear(Mako3D.color(16, 16, 24));
+        Mako3D.begin_3d(cam);
+        Mako3D.grid(24, 1);
+
+        Mako3D.draw_scene();   # <- every spawned object, in one call
+
+        Mako3D.end_3d();
+
+        Mako3D.text("Mako3D scene: {Mako3D.object_count()} objects", 10, 10, 20, Mako3D.WHITE);
+        Mako3D.text("SPACE: toggle orbiter wireframe   R: remove a random grid cube", 10, 36, 15, Mako3D.LIGHTGRAY);
+        Mako3D.draw_fps(900, 10);
+        Mako3D.end();
+    }
+
+    Mako3D.close();
+}

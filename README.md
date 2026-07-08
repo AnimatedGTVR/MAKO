@@ -121,6 +121,7 @@ All examples install globally. Run these from any directory:
 | `mko settings.mko`     | FPS overlay, graph, audio sliders, and FPS cap selector                  |
 | `mko ui_demo.mko`      | Dear ImGui desktop UI — menus, tables, modals, cherry-blossom theme      |
 | `mko embedded_ui_demo.mko` | MakoUI embedded live in a 3D scene — menu bar, real toolbar, FPS cap + counter, tabbed inspector, no second window |
+| `mko scene_demo.mko` | Mako3D's scene/object system — spawn dozens of objects once, `draw_scene()` handles the rest |
 | `mko sound_3d.mko`     | 3D positional audio — beacons that pan and fade as you fly               |
 | `mko input_test.mko`   | Visual input tester — every key/button lights up live                    |
 
@@ -208,7 +209,7 @@ using mylib from "github:User/Repo";
 | Package         | What it gives you                                                                    |
 | --------------- | ------------------------------------------------------------------------------------ |
 | `using Mako2D;` | 2D games: sprites, spritesheets, Camera2D, shapes, text                              |
-| `using Mako3D;` | 3D games: Camera3D, fly/orbit controls, cubes, spheres, models, grid                 |
+| `using Mako3D;` | 3D games: Camera3D, fly/orbit controls, cubes, spheres, models, grid — plus a spawn/draw_scene() object system so you stop hand-redrawing static geometry every frame |
 | `using Inputs;` | Unified input: keyboard, mouse, cursor lock, gamepad                                 |
 | `using Audio;`  | Sound files, synthesizer, music streaming, 2D/3D positional sound, 8-voice polyphony |
 | `using Net;`    | HTTP requests (GET/POST/PUT/DELETE) + JSON encode/decode                            |
