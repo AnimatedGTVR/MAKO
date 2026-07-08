@@ -23,6 +23,11 @@ if (args[0] == "version" || args[0] == "--version" || args[0] == "-v")
     return 0;
 }
 
+// Shorthand: `mko script.mko` or `mko ./script.mko` — no 'run' needed.
+// Also handles shebang invocation: `#!/usr/bin/env mko`
+if (args[0].EndsWith(".mko", StringComparison.OrdinalIgnoreCase) || File.Exists(args[0]))
+    args = new[] { "run" }.Concat(args).ToArray();
+
 if (args[0] == "run")
 {
     if (args.Length < 2)
@@ -37,9 +42,10 @@ if (args[0] == "run")
         Console.Error.WriteLine($"mko: file not found: {path}");
         return 1;
     }
-    if (!path.EndsWith(".mko", StringComparison.OrdinalIgnoreCase))
+    // Allow extension-less files when invoked via shebang (#! line).
+    if (!path.EndsWith(".mko", StringComparison.OrdinalIgnoreCase) && !File.Exists(path))
     {
-        Console.Error.WriteLine($"mko: file must have a .mko extension");
+        Console.Error.WriteLine($"mko: file not found: {path}");
         return 1;
     }
 
@@ -50,6 +56,10 @@ if (args[0] == "run")
         Console.Error.WriteLine($"mko: could not read file: {ex.Message}");
         return 1;
     }
+
+    // Strip shebang line so `#!/usr/bin/env mko` doesn't cause a parse error.
+    if (source.StartsWith("#!"))
+        source = source[(source.IndexOf('\n') + 1)..];
 
     try
     {
