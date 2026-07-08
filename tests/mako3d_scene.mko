@@ -46,6 +46,16 @@ main() {
     Mako3D.remove_object(999);
     assert(Mako3D.object_count() == 3, "operations on a bad handle don't corrupt state");
 
+    # object_info() is the read side of set_object_* — for editor/inspector panels
+    info = Mako3D.object_info(cube);
+    assert(info["shape"] == "cube", "object_info reports shape");
+    assert(abs(info["x"] - 3) < 0.001, "object_info reflects set_object_pos");
+    assert(abs(info["sx"] - 4) < 0.001, "object_info reflects set_object_scale");
+    assert(abs(info["rotation"] - 45) < 0.001, "object_info reflects set_object_rotation");
+    assert(info["color"][0] == Mako3D.GOLD[0], "object_info reflects set_object_color");
+    assert(info["visible"] == true, "object_info reports visibility");
+    assert(Mako3D.object_info(999) == none, "object_info on a bad handle is none");
+
     # box3d_overlap / dist3d
     assert(dist3d(0, 0, 0,  3, 4, 0) == 5, "dist3d — 3-4-5 right triangle");
     assert(box3d_overlap(0,0,0, 2,2,2,  1,1,1, 3,3,3), "overlapping boxes");

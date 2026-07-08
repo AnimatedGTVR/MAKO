@@ -359,6 +359,11 @@ sealed class MakoUI : IDisposable
     public double GetTime()                  => ImGui.GetTime();
     public double GetFramerate()             => ImGui.GetIO().Framerate;
 
+    /// True while the mouse is over a MakoUI panel/widget — check this before
+    /// doing your own 3D picking so a click on the UI doesn't also select an
+    /// object underneath it.
+    public bool WantsMouse()                  => ImGui.GetIO().WantCaptureMouse;
+
     // ── Tabs ──────────────────────────────────────────────────────────────────
 
     public bool BeginTabBar(string id)       => ImGui.BeginTabBar(id);

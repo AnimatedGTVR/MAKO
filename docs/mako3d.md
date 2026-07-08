@@ -102,6 +102,7 @@ while Mako3D.running() {
 | `clear_objects()` | Remove everything |
 | `object_count()` | How many are currently registered |
 | `object_bounds(h)` | `[min_x,min_y,min_z, max_x,max_y,max_z]` — an axis-aligned box for collision, or `none` if removed |
+| `object_info(h)` | Dict with `shape,x,y,z,sx,sy,sz,rotation,color,visible,wires` — the read side of `set_object_*()`, or `none` if removed |
 | `draw_scene()` | Draw every visible spawned object — call between `begin_3d()`/`end_3d()` |
 
 `set_object_scale`'s three numbers mean different things per shape:
@@ -134,7 +135,11 @@ or `none` if nothing was under it. Ray/AABB test against `object_bounds()`,
 so it ignores rotation the same way bounds do, and skips hidden objects.
 
 ```mako
-if Inputs.mouse_pressed("left") { selected = Mako3D.pick_object(cam); }
+# Guard with MakoUI.wants_mouse() if MakoUI is embedded in the same window,
+# so clicking a panel doesn't also select an object underneath it.
+if Inputs.mouse_pressed("left") and not MakoUI.wants_mouse() {
+    selected = Mako3D.pick_object(cam);
+}
 
 if selected != none {
     b = Mako3D.object_bounds(selected);
@@ -149,7 +154,13 @@ if selected != none {
 
 That pattern — pick on click, draw a `wire_cube` around the current bounds
 each frame, drop the selection if `object_bounds()` comes back `none` — is
-the whole click-to-select loop. See `examples/scene_demo.mko`.
+the whole click-to-select loop. Pair it with `object_info(handle)` (the read
+side of `set_object_*()` — shape, position, scale, rotation, color,
+visibility, wireframe, all in one dict) to build a live editor: read the
+current values into sliders, write any change straight back with
+`set_object_*()`. See `examples/scene_demo.mko` for the picking loop and
+`examples/embedded_ui_demo.mko`'s "Selected" tab for the full live-edit
+pattern with MakoUI.
 
 See `examples/scene_demo.mko` for a scene with dozens of objects, a
 rotating handle-driven pillar, runtime removal, and click-to-select.

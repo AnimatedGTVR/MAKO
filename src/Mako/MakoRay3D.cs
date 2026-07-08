@@ -514,6 +514,32 @@ static class MakoRay3D
         return null;
     }
 
+    private static string ShapeName(ObjShape s) => s switch
+    {
+        ObjShape.Cube => "cube", ObjShape.Sphere => "sphere",
+        ObjShape.Cylinder => "cylinder", ObjShape.Plane => "plane", _ => "cube",
+    };
+
+    /// object_info(handle) → dict with the object's current shape, position,
+    /// scale, rotation, color, visibility, and wireframe flag — the read side
+    /// to go with set_object_*(), e.g. for populating an editor/inspector
+    /// panel with a selected object's live values.
+    public static object? ObjectInfo(List<object?> a)
+    {
+        var o = GetObj(a);
+        if (o is null) return null;
+        return new Dictionary<string, object?>
+        {
+            ["shape"]    = ShapeName(o.Shape),
+            ["x"] = (double)o.Pos.X, ["y"] = (double)o.Pos.Y, ["z"] = (double)o.Pos.Z,
+            ["sx"] = (double)o.Scale.X, ["sy"] = (double)o.Scale.Y, ["sz"] = (double)o.Scale.Z,
+            ["rotation"] = (double)o.RotationY,
+            ["color"]    = ColorList(o.Tint),
+            ["visible"]  = o.Visible,
+            ["wires"]    = o.Wires,
+        };
+    }
+
     public static object? SetObjectVisible(List<object?> a)
     {
         var o = GetObj(a); if (o is null) return null;
@@ -724,6 +750,7 @@ static class MakoRay3D
         ["clear_objects"]      = ClearObjects,
         ["object_count"]       = ObjectCount,
         ["object_bounds"]      = ObjectBounds,
+        ["object_info"]        = ObjectInfo,
         ["draw_scene"]         = DrawScene,
         ["pick_object"]        = PickObject,
     };

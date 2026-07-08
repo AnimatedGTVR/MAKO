@@ -8,10 +8,11 @@ using MakoUI;
 #
 #   A MENU BAR : File / View, pinned to the very top edge
 #   A TOOLBAR  : a slim strip below it, icon-style buttons in a row
-#   An INSPECTOR: a tabbed floating panel for detailed settings
+#   An INSPECTOR: a tabbed floating panel — click an object to edit it live
 #
 #   WASD/arrows fly, Q/E up/down, middle mouse orbit, scroll zoom
-#   Tab between "Scene" / "Objects" / "Settings" in the inspector
+#   Left click an object to select it — edit its live properties in the
+#   Inspector's "Selected" tab, or recolor it with the toolbar swatches.
 
 const COLORS = [
     [230, 70, 70, 255],    # red
@@ -30,19 +31,31 @@ main() {
     MakoUI.attach();
     MakoUI.theme_mako();
 
-    cam = Mako3D.camera(10, 8, 10,  0, 0, 0);
+    cam = Mako3D.camera(12, 9, 12,  0, 0, 0);
 
-    # Scene state — all editable live from the toolbar / inspector
+    # A small scene, spawned once — the Inspector edits these live by handle.
+    Mako3D.spawn_plane(0, 0, 0,  20, 20, Mako3D.color(30, 32, 40));
+    pillar = Mako3D.spawn_cylinder(0, 1.5, 0,  0.6, 0.9, 3, Mako3D.GOLD);
+    props = [];
+    px = 0 - 4;
+    while px <= 4 {
+        if px != 0 {
+            h = Mako3D.spawn_cube(px, 0.5, 3,  1, 1, 1, Mako3D.color(90, 130, 200));
+            push(props, h);
+        }
+        px = px + 2;
+    }
+    orbiter = Mako3D.spawn_sphere(6, 2, 0,  0.8, Mako3D.SKYBLUE);
+
     spin = true;
     spin_speed = 1.0;
-    cube_color_i = 0;
-    cube_size = 2.0;
     bg = [18, 18, 26];
     show_grid = true;
     cam_speed = 8.0;
     fps_cap_i = 5;   # start uncapped so the fps_counter graph has something to show
     show_inspector = true;
     quit = false;
+    selected = none;
 
     t = 0;
 
@@ -51,18 +64,33 @@ main() {
         if spin { t = t + dt * spin_speed; }
         Mako3D.update_camera(cam, cam_speed);
 
+        Mako3D.set_object_rotation(pillar, t * 40);
+        Mako3D.set_object_pos(orbiter, cos(t) * 6, 2 + sin(t * 2) * 0.5, sin(t) * 6);
+
+        # Click to select — but only when the click isn't landing on a UI
+        # panel (MakoUI.wants_mouse() is true while hovering any panel).
+        if Inputs.mouse_pressed("left") and not MakoUI.wants_mouse() {
+            selected = Mako3D.pick_object(cam);
+        }
+
         # ── 3D scene — no text, no HUD, just geometry ────────────────────────
         Mako3D.begin();
         Mako3D.clear(Mako3D.color(bg[0], bg[1], bg[2]));
         Mako3D.begin_3d(cam);
 
         if show_grid { Mako3D.grid(20, 1); }
+        Mako3D.draw_scene();
 
-        col = COLORS[cube_color_i];
-        Mako3D.cube(sin(t) * 4, 1.5, cos(t) * 4,
-                     cube_size, cube_size, cube_size,
-                     Mako3D.color(col[0], col[1], col[2]));
-        Mako3D.sphere(0, 1, 0, 1.2, Mako3D.SKYBLUE);
+        if selected != none {
+            b = Mako3D.object_bounds(selected);
+            if b == none {
+                selected = none;
+            } else {
+                cx = (b[0]+b[3])/2; cy = (b[1]+b[4])/2; cz = (b[2]+b[5])/2;
+                Mako3D.wire_cube(cx, cy, cz,
+                    b[3]-b[0]+0.1, b[4]-b[1]+0.1, b[5]-b[2]+0.1, Mako3D.GOLD);
+            }
+        }
 
         Mako3D.end_3d();
 
@@ -83,16 +111,15 @@ main() {
         }
         if Inputs.key_pressed("ESCAPE") { quit = true; }
 
-        # A TOOLBAR — pinned right below the menu bar (the viewport's work
-        # area already excludes the menu bar's height), full width, a row
-        # of icon-style buttons — Play/Pause, grid toggle, color swatches,
-        # FPS cap, and the live FPS counter.
+        # A TOOLBAR — pinned right below the menu bar, full width, a row of
+        # icon-style buttons: Play/Pause, grid toggle, color swatches (recolor
+        # whatever's selected), FPS cap, and the live FPS counter.
         MakoUI.begin_toolbar("main_toolbar", 48);
 
         spin_label = "Pause";
         if not spin { spin_label = "Play"; }
         if MakoUI.button(spin_label) { spin = not spin; }
-        MakoUI.tooltip("Pause/resume the cube's orbit");
+        MakoUI.tooltip("Pause/resume the pillar and orbiter");
 
         MakoUI.same_line();
         MakoUI.separator();
@@ -112,9 +139,11 @@ main() {
             MakoUI.same_line();
             c = COLORS[i];
             MakoUI.push_color(21, c[0] / 255.0, c[1] / 255.0, c[2] / 255.0); # ImGuiCol.Button
-            if MakoUI.small_button("  ##color{i}") { cube_color_i = i; }
+            if MakoUI.small_button("  ##color{i}") and selected != none {
+                Mako3D.set_object_color(selected, Mako3D.color(c[0], c[1], c[2]));
+            }
             MakoUI.pop_color(1);
-            MakoUI.tooltip("Set cube color");
+            MakoUI.tooltip("Recolor the selected object");
             i = i + 1;
         }
 
@@ -122,8 +151,6 @@ main() {
         MakoUI.separator();
         MakoUI.same_line();
 
-        # FPS cap — click to cycle through common caps, matches the pattern
-        # from examples/settings.mko but as a proper toolbar control.
         if MakoUI.button("FPS: {FPS_LABELS[fps_cap_i]}##fps_cap") {
             fps_cap_i = (fps_cap_i + 1) % len(FPS_CAPS);
             Mako3D.fps(FPS_CAPS[fps_cap_i]);
@@ -137,24 +164,58 @@ main() {
 
         MakoUI.end_window();
 
-        # An INSPECTOR: a normal floating, tabbed panel — for settings that
-        # need more room than a toolbar button (sliders, detailed readouts).
+        # An INSPECTOR: a tabbed floating panel. The "Selected" tab reads
+        # object_info(selected) fresh every frame and writes any slider
+        # change straight back with set_object_*() — a real live editor loop.
         if show_inspector {
             MakoUI.set_window_pos(10, 58);
-            MakoUI.set_window_size(300, 220);
+            MakoUI.set_window_size(300, 260);
             MakoUI.begin_window("Inspector");
 
             if MakoUI.begin_tab_bar("main_tabs") {
 
                 if MakoUI.begin_tab_item("Scene") {
                     MakoUI.text("Camera: WASD fly, MMB orbit, wheel zoom");
-                    MakoUI.text("Cube orbit angle: {round(t * 57.3) % 360} deg");
+                    MakoUI.text("Objects: {Mako3D.object_count()}");
+                    MakoUI.text("Click an object to select it");
                     MakoUI.end_tab_item();
                 }
 
-                if MakoUI.begin_tab_item("Objects") {
-                    spin_speed = MakoUI.slider("Spin speed", spin_speed, 0, 4);
-                    cube_size = MakoUI.slider("Cube size", cube_size, 0.5, 4);
+                if MakoUI.begin_tab_item("Selected") {
+                    if selected == none {
+                        MakoUI.text("Nothing selected.");
+                        MakoUI.text_colored("Click an object in the scene.", 0.7, 0.6, 0.64, 1.0);
+                    } else {
+                        info = Mako3D.object_info(selected);
+                        if info == none {
+                            MakoUI.text("Selected object was removed.");
+                            selected = none;
+                        } else {
+                            MakoUI.text("Shape: {info["shape"]}   handle {selected}");
+                            MakoUI.separator();
+
+                            nx = MakoUI.drag("X", info["x"], 0.05);
+                            ny = MakoUI.drag("Y", info["y"], 0.05);
+                            nz = MakoUI.drag("Z", info["z"], 0.05);
+                            if nx != info["x"] or ny != info["y"] or nz != info["z"] {
+                                Mako3D.set_object_pos(selected, nx, ny, nz);
+                            }
+
+                            col = info["color"];
+                            nr = MakoUI.slider("R", col[0], 0, 255);
+                            ng = MakoUI.slider("G", col[1], 0, 255);
+                            nb = MakoUI.slider("B", col[2], 0, 255);
+                            if nr != col[0] or ng != col[1] or nb != col[2] {
+                                Mako3D.set_object_color(selected, Mako3D.color(nr, ng, nb));
+                            }
+
+                            wires = MakoUI.checkbox("Wireframe outline", info["wires"]);
+                            if wires != info["wires"] { Mako3D.set_object_wires(selected, wires); }
+
+                            visible = MakoUI.checkbox("Visible", info["visible"]);
+                            if visible != info["visible"] { Mako3D.set_object_visible(selected, visible); }
+                        }
+                    }
                     MakoUI.end_tab_item();
                 }
 

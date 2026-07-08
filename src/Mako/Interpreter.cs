@@ -662,7 +662,7 @@ class Interpreter
         "MakoUI.tooltip", "MakoUI.set_tooltip",
         // MakoUI — query
         "MakoUI.is_hovered", "MakoUI.is_clicked", "MakoUI.is_key_pressed",
-        "MakoUI.get_time", "MakoUI.framerate", "MakoUI.fps_counter",
+        "MakoUI.get_time", "MakoUI.framerate", "MakoUI.fps_counter", "MakoUI.wants_mouse",
         "MakoUI.begin_tab_bar", "MakoUI.end_tab_bar", "MakoUI.begin_tab_item", "MakoUI.end_tab_item",
         // MakoUI — style & themes
         "MakoUI.push_color", "MakoUI.pop_color", "MakoUI.push_var", "MakoUI.pop_var",
@@ -1406,6 +1406,9 @@ class Interpreter
             case "MakoUI.fps_counter":
                 RequireArity(name, args, 0);
                 EnsureUI(name); _ui!.FpsCounter(); result = null; return true;
+            case "MakoUI.wants_mouse":
+                RequireArity(name, args, 0);
+                EnsureUI(name); result = (object?)_ui!.WantsMouse(); return true;
 
             case "MakoUI.begin_tab_bar":
                 RequireArity(name, args, 1);

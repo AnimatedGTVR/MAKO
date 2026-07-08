@@ -233,6 +233,10 @@ if MakoUI.begin_table("data", 3) {
   `set_tooltip(text)` — unconditional
 - `is_hovered()` / `is_clicked()` — state of the previous widget
 - `is_key_pressed(key)` · `get_time()` · `framerate()`
+- `wants_mouse()` — true while the mouse is over any MakoUI panel/widget;
+  check this before your own 3D picking so a click on the UI doesn't also
+  select an object underneath it (`if Inputs.mouse_pressed("left") and not
+  MakoUI.wants_mouse() { selected = Mako3D.pick_object(cam); }`)
 - Themes: `theme_dark()` · `theme_light()` · `theme_mako()` (cherry blossom)
 - Fine styling: `push_color(idx, r, g, b, a)` / `pop_color(n)` ·
   `push_var(idx, value)` / `pop_var(n)`
