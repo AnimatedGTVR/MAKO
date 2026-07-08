@@ -1,10 +1,5 @@
 namespace Mako;
 
-// Control-flow signals
-file sealed class ReturnSignal(object? value) : Exception { public object? Value { get; } = value; }
-file sealed class BreakSignal()    : Exception;
-file sealed class ContinueSignal() : Exception;
-
 /// A first-class lambda / closure value.
 sealed class MakoFn(List<string> parms, List<Statement> body, Dictionary<string, object?> captured)
 {
@@ -18,6 +13,12 @@ sealed class MakoFn(List<string> parms, List<Statement> body, Dictionary<string,
 /// Runtime value types:  string | double | bool | List<object?> | null
 class Interpreter
 {
+    // Control flow (return/break/continue) is tracked with a plain flag rather
+    // than thrown exceptions — in .NET, throwing captures a stack trace on
+    // every throw, which is drastically more expensive than a field check
+    // and made recursive MAKO functions (e.g. fib) needlessly slow.
+    private enum Flow { None, Return, Break, Continue }
+
     private readonly Dictionary<string, FnDecl> _funcs = new();
     private MakoUI? _ui;
     private bool    _rayActive;
@@ -28,6 +29,10 @@ class Interpreter
     private bool    _netActive;
     private bool    _hanamiActive;
     public  List<string> ScriptArgs { get; set; } = [];
+
+    // Control-flow state for return/break/continue — see the Flow enum above.
+    private Flow    _flow;
+    private object? _returnValue;
 
     // Each scope holds variable values and a set of const names.
     private sealed class Scope
@@ -49,13 +54,16 @@ class Interpreter
             // still alive, and CloseWindow must run at most once per process —
             // raylib tears down GL/GLFW unconditionally, so a second close
             // (script already called close()) segfaults on exit.
-            bool hadWindow = _rayActive || _ray2DActive || _ray3DActive;
+            // Hanami can open a raylib window on its own (via its engine-level
+            // init()), even when the script never says 'using Mako3D;' — so it
+            // must count toward window cleanup too.
+            bool hadWindow = _rayActive || _ray2DActive || _ray3DActive || _hanamiActive;
             if (_ray2DActive) MakoRay2D.UnloadAll();
             if (_ray3DActive) MakoRay3D.UnloadAll();
             if (_audioActive) MakoAudio.UnloadAll();
             if (hadWindow && Raylib_cs.Raylib.IsWindowReady())
                 Raylib_cs.Raylib.CloseWindow();
-            _rayActive = _ray2DActive = _ray3DActive = _audioActive = false;
+            _rayActive = _ray2DActive = _ray3DActive = _audioActive = _hanamiActive = false;
         }
     }
 
@@ -85,8 +93,12 @@ class Interpreter
             else
             {
                 RunStatement(stmt);
+                if (_flow != Flow.None) break;
             }
         }
+        // The REPL reuses this Interpreter across lines, so a stray
+        // return/break/continue must not leak into the next line typed.
+        if (_flow != Flow.None) ResetFlowAtTopLevel();
     }
 
     private void ExecuteCore(ProgramNode program, string baseDir)
@@ -206,11 +218,34 @@ class Interpreter
             _scopes[0].Consts.Add(cname);
         }
 
-        try   { foreach (var stmt in program.Body) RunStatement(stmt); }
-        catch (ReturnSignal) { }
+        RunBlock(program.Body);
+        ResetFlowAtTopLevel();
+    }
+
+    /// A stray break/continue that escapes all the way to the top of the
+    /// script or a function body means it was used outside any loop —
+    /// surface that as a real error instead of silently swallowing it.
+    private void ResetFlowAtTopLevel()
+    {
+        var leaked = _flow;
+        _flow = Flow.None;
+        if (leaked == Flow.Break)    throw new MakoError("'break' used outside of a loop");
+        if (leaked == Flow.Continue) throw new MakoError("'continue' used outside of a loop");
     }
 
     // ── Statements ────────────────────────────────────────────────────────────
+
+    /// Runs a list of statements in sequence, stopping early the moment a
+    /// return/break/continue is signalled so it can propagate to the nearest
+    /// loop or function-call boundary that handles it.
+    private void RunBlock(List<Statement> stmts)
+    {
+        foreach (var s in stmts)
+        {
+            RunStatement(s);
+            if (_flow != Flow.None) return;
+        }
+    }
 
     /// Runs a statement, attaching the statement's source position to any
     /// runtime error that doesn't already carry a more precise one.
@@ -281,19 +316,19 @@ class Interpreter
 
             case IfStmt i:
                 if (Truthy(Eval(i.Condition)))
-                    foreach (var s in i.Then) RunStatement(s);
+                    RunBlock(i.Then);
                 else
-                    foreach (var s in i.Else) RunStatement(s);
+                    RunBlock(i.Else);
                 break;
 
             case WhileStmt w:
-                try
+                while (Truthy(Eval(w.Condition)))
                 {
-                    while (Truthy(Eval(w.Condition)))
-                        try   { foreach (var s in w.Body) RunStatement(s); }
-                        catch (ContinueSignal) { }
+                    RunBlock(w.Body);
+                    if (_flow == Flow.Break)    { _flow = Flow.None; break; }
+                    if (_flow == Flow.Continue) { _flow = Flow.None; continue; }
+                    if (_flow == Flow.Return)   break;   // propagate to the caller
                 }
-                catch (BreakSignal) { }
                 break;
 
             case ForStmt f:
@@ -307,23 +342,23 @@ class Interpreter
                     throw new MakoError($"'for' needs a list or dict to loop over, got {TypeName(iterable)}"
                         + (iterable is string ? " — to loop over characters, use split(text, \"\")" : "")
                         + (iterable is double ? " — to loop over numbers, use range(n)" : ""));
-                try
+                foreach (var item in new List<object?>(items))
                 {
-                    foreach (var item in new List<object?>(items))
-                    {
-                        SetVar(f.Var, item);
-                        try   { foreach (var s in f.Body) RunStatement(s); }
-                        catch (ContinueSignal) { }
-                    }
+                    SetVar(f.Var, item);
+                    RunBlock(f.Body);
+                    if (_flow == Flow.Break)    { _flow = Flow.None; break; }
+                    if (_flow == Flow.Continue) { _flow = Flow.None; continue; }
+                    if (_flow == Flow.Return)   break;   // propagate to the caller
                 }
-                catch (BreakSignal) { }
                 break;
 
-            case BreakStmt:    throw new BreakSignal();
-            case ContinueStmt: throw new ContinueSignal();
+            case BreakStmt:    _flow = Flow.Break;    break;
+            case ContinueStmt: _flow = Flow.Continue; break;
 
             case ReturnStmt r:
-                throw new ReturnSignal(r.Value is null ? null : Eval(r.Value));
+                _returnValue = r.Value is null ? null : Eval(r.Value);
+                _flow = Flow.Return;
+                break;
 
             case RunStmt r:
                 RunShellCommand(Stringify(Eval(r.Command)));
@@ -333,22 +368,21 @@ class Interpreter
                 try
                 {
                     PushScope();
-                    try   { foreach (var s in ts.Try) RunStatement(s); }
+                    try   { RunBlock(ts.Try); }
                     finally { PopScope(); }
                 }
                 catch (MakoError e) when (ts.HasCatch)
                 {
                     PushScope();
                     if (ts.CatchVar != null) SetVar(ts.CatchVar, e.RawMessage);
-                    try   { foreach (var s in ts.Catch) RunStatement(s); }
+                    try   { RunBlock(ts.Catch); }
                     finally { PopScope(); }
                 }
-                catch (Exception e) when (e is not (ReturnSignal or BreakSignal or ContinueSignal)
-                                              && ts.HasCatch)
+                catch (Exception e) when (ts.HasCatch)
                 {
                     PushScope();
                     if (ts.CatchVar != null) SetVar(ts.CatchVar, e.Message);
-                    try   { foreach (var s in ts.Catch) RunStatement(s); }
+                    try   { RunBlock(ts.Catch); }
                     finally { PopScope(); }
                 }
                 break;
@@ -437,10 +471,11 @@ class Interpreter
 
         try
         {
-            foreach (var stmt in fn.Body) RunStatement(stmt);
-            return null;
+            RunBlock(fn.Body);
+            var ret = _flow == Flow.Return ? _returnValue : null;
+            ResetFlowAtTopLevel();
+            return ret;
         }
-        catch (ReturnSignal r) { return r.Value; }
         finally { PopScope(); }
     }
 
@@ -571,8 +606,12 @@ class Interpreter
             _scopes[^1].Vars[fn.Params[i]] = args[i];
 
         object? ret = null;
-        try   { foreach (var s in fn.Body) RunStatement(s); }
-        catch (ReturnSignal sig) { ret = sig.Value; }
+        try
+        {
+            RunBlock(fn.Body);
+            if (_flow == Flow.Return) ret = _returnValue;
+            ResetFlowAtTopLevel();
+        }
         catch (MakoError e) when (fn.Source != null && e.SourcePath is null)
         {
             // Error inside an imported function: its line numbers refer to the
