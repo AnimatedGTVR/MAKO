@@ -21,6 +21,8 @@ class Interpreter
     private readonly Dictionary<string, FnDecl> _funcs = new();
     private MakoUI? _ui;
     private bool    _rayActive;
+    private bool    _ray2DActive;
+    private bool    _ray3DActive;
 
     // Each scope holds variable values and a set of const names.
     private sealed class Scope
@@ -38,7 +40,9 @@ class Interpreter
         finally
         {
             _ui?.Dispose(); _ui = null;
-            if (_rayActive) { Raylib_cs.Raylib.CloseWindow(); _rayActive = false; }
+            if (_rayActive)   { Raylib_cs.Raylib.CloseWindow(); _rayActive   = false; }
+            if (_ray2DActive) { MakoRay2D.UnloadAll(); _ray2DActive = false; }
+            if (_ray3DActive) { MakoRay3D.UnloadAll(); _ray3DActive = false; }
         }
     }
 
@@ -90,10 +94,23 @@ class Interpreter
 
                 if (pkg.Name.Equals("MakoRay", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Inject named color constants into global scope.
                     foreach (var (k, v) in MakoRay.Colors)
                         SetVar($"MakoRay.{k}", v);
                     _rayActive = true;
+                }
+
+                if (pkg.Name.Equals("Mako2D", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var (k, v) in MakoRay2D.Colors)
+                        SetVar($"Mako2D.{k}", v);
+                    _ray2DActive = true;
+                }
+
+                if (pkg.Name.Equals("Mako3D", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var (k, v) in MakoRay3D.Colors)
+                        SetVar($"Mako3D.{k}", v);
+                    _ray3DActive = true;
                 }
                 continue;
             }
@@ -1156,19 +1173,31 @@ class Interpreter
             case "MakoUI.framerate":
                 EnsureUI(name); result = _ui!.GetFramerate(); return true;
 
-            // ── MakoRay ───────────────────────────────────────────────────────
+            // ── MakoRay / Mako2D / Mako3D ────────────────────────────────────
             default:
                 if (name.StartsWith("MakoRay.", StringComparison.OrdinalIgnoreCase))
                 {
                     EnsureRay(name);
                     var fn2 = name["MakoRay.".Length..];
                     if (MakoRay.Funcs.TryGetValue(fn2, out var rayFn))
-                    {
-                        result = rayFn(args);
-                        return true;
-                    }
-                    // Also handle color constants accessed as calls (shouldn't happen, but safe)
+                        { result = rayFn(args); return true; }
                     throw new MakoError($"MakoRay.{fn2}() wasn't found");
+                }
+                if (name.StartsWith("Mako2D.", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!_ray2DActive) throw new MakoError($"{name}() requires 'using Mako2D;'");
+                    var fn2 = name["Mako2D.".Length..];
+                    if (MakoRay2D.Funcs.TryGetValue(fn2, out var fn2d))
+                        { result = fn2d(args); return true; }
+                    throw new MakoError($"Mako2D.{fn2}() wasn't found");
+                }
+                if (name.StartsWith("Mako3D.", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!_ray3DActive) throw new MakoError($"{name}() requires 'using Mako3D;'");
+                    var fn3 = name["Mako3D.".Length..];
+                    if (MakoRay3D.Funcs.TryGetValue(fn3, out var fn3d))
+                        { result = fn3d(args); return true; }
+                    throw new MakoError($"Mako3D.{fn3}() wasn't found");
                 }
                 return false;
         }

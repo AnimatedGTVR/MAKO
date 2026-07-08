@@ -1,0 +1,52 @@
+using Mako3D;
+
+# Mako3D demo — orbiting camera, spinning shapes
+
+main() {
+    Mako3D.init(800, 600, "Mako3D Demo");
+    Mako3D.fps(60);
+
+    cam = Mako3D.camera(10, 8, 10,  0, 0, 0);
+    Mako3D.hide_cursor();
+
+    angle = 0;
+
+    while Mako3D.running() {
+        dt = Mako3D.delta();
+        angle = angle + dt * 30;
+
+        # Orbit camera with mouse or auto-rotate
+        Mako3D.orbit_camera(cam, angle, 14, 7);
+
+        Mako3D.begin();
+        Mako3D.clear(Mako3D.color(18, 18, 28));
+
+        Mako3D.begin_3d(cam);
+
+        # Ground plane
+        Mako3D.plane(0, 0, 0, 20, 20, Mako3D.DARKGRAY);
+        Mako3D.grid(20, 1);
+
+        # Shapes
+        Mako3D.cube(0, 1, 0,   2, 2, 2,   Mako3D.RED);
+        Mako3D.sphere(4, 1.5, 0,  1.5,  Mako3D.SKYBLUE);
+        Mako3D.cylinder(0, 0, 4,  0.8, 0.8, 3,  Mako3D.LIME);
+        Mako3D.cube(-4, 0.5, 0,  1, 1, 1,  Mako3D.GOLD);
+        Mako3D.sphere(-4, 2, 3,  0.8,  Mako3D.VIOLET);
+        Mako3D.cube(3, 0.5, -4,  3, 1, 1,  Mako3D.ORANGE);
+
+        Mako3D.end_3d();
+
+        # HUD
+        Mako3D.text("Mako3D — auto-orbiting camera", 10, 10, 20, Mako3D.WHITE);
+        Mako3D.text("ESC to quit", 10, 36, 16, Mako3D.LIGHTGRAY);
+        Mako3D.draw_fps(10, 58);
+
+        Mako3D.end();
+
+        if Mako3D.key_pressed("ESCAPE") { Mako3D.show_cursor(); }
+    }
+
+    Mako3D.show_cursor();
+    Mako3D.close();
+}

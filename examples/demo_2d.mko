@@ -1,0 +1,59 @@
+using Mako2D;
+
+# Mako2D demo — player square with camera follow
+
+main() {
+    Mako2D.init(800, 600, "Mako2D Demo");
+    Mako2D.fps(60);
+
+    cam = Mako2D.camera(0, 0, 1.0);
+
+    px = 400;
+    py = 300;
+    speed = 200;
+
+    while Mako2D.running() {
+        dt = Mako2D.delta();
+
+        if Mako2D.key_down("RIGHT") { px = px + speed * dt; }
+        if Mako2D.key_down("LEFT")  { px = px - speed * dt; }
+        if Mako2D.key_down("DOWN")  { py = py + speed * dt; }
+        if Mako2D.key_down("UP")    { py = py - speed * dt; }
+
+        # Follow player with camera
+        Mako2D.set_camera(cam, px, py);
+
+        Mako2D.begin();
+        Mako2D.clear(Mako2D.BLACK);
+
+        Mako2D.begin_cam(cam);
+
+        # World grid
+        i = 0;
+        while i < 20 {
+            Mako2D.line(i * 100 - 500, -500, i * 100 - 500, 1500, Mako2D.fade(Mako2D.WHITE, 0.1));
+            Mako2D.line(-500, i * 100 - 500, 1500, i * 100 - 500, Mako2D.fade(Mako2D.WHITE, 0.1));
+            i = i + 1;
+        }
+
+        # Some world objects
+        Mako2D.rect(100, 100, 80, 80, Mako2D.RED);
+        Mako2D.rect(300, 200, 60, 60, Mako2D.GOLD);
+        Mako2D.circle(600, 400, 40, Mako2D.SKYBLUE);
+        Mako2D.rect_round(500, 100, 120, 60, 0.4, 8, Mako2D.VIOLET);
+
+        # Player
+        Mako2D.rect_round(px - 20, py - 20, 40, 40, 0.3, 6, Mako2D.LIME);
+        Mako2D.circle(px, py - 30, 8, Mako2D.WHITE);
+
+        Mako2D.end_cam();
+
+        # HUD
+        Mako2D.text("Arrow keys to move", 10, 10, 20, Mako2D.WHITE);
+        Mako2D.draw_fps(10, 36);
+
+        Mako2D.end();
+    }
+
+    Mako2D.close();
+}
