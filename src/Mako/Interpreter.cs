@@ -1160,11 +1160,12 @@ class Interpreter
                 _ui!.Text(Stringify(args[0])); result = null; return true;
 
             case "MakoUI.text_colored":
-                RequireArity(name, args, 5);
+                if (args.Count < 4 || args.Count > 5)
+                    throw new MakoError("MakoUI.text_colored() expects (text, r, g, b [, a])");
                 EnsureUI(name);
-                _ui!.TextColored(AsNum(name, args[0]), AsNum(name, args[1]),
+                _ui!.TextColored(Stringify(args[0]), AsNum(name, args[1]),
                                  AsNum(name, args[2]), AsNum(name, args[3]),
-                                 Stringify(args[4]));
+                                 args.Count > 4 ? AsNum(name, args[4]) : 1.0);
                 result = null; return true;
 
             case "MakoUI.button":

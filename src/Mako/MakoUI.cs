@@ -183,7 +183,7 @@ sealed class MakoUI : IDisposable
     // ── Widgets ───────────────────────────────────────────────────────────────
 
     public void   Text(string s)              => ImGui.Text(s);
-    public void   TextColored(double r, double g, double b, double a, string s) =>
+    public void   TextColored(string s, double r, double g, double b, double a = 1.0) =>
         ImGui.TextColored(new Vector4((float)r, (float)g, (float)b, (float)a), s);
 
     public bool   Button(string label)        => ImGui.Button(label);

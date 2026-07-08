@@ -168,7 +168,7 @@ choice  = MakoUI.combo("Fruit", choice, ["Apple", "Banana", "Cherry"]);
 
 | Widget | Notes |
 |---|---|
-| `text(s)` / `text_colored(s, r, g, b)` | Labels |
+| `text(s)` / `text_colored(s, r, g, b, a=1.0)` | Labels — colors are 0-1 floats (ImGui convention), not 0-255 |
 | `button(label)` / `small_button(label)` | `true` when clicked |
 | `checkbox(label, value)` | Returns new bool |
 | `slider(label, value, min, max)` / `slider_int(...)` | Returns new value |
