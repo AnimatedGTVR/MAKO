@@ -26,6 +26,7 @@ class Interpreter
     private bool    _inputsActive;
     private bool    _audioActive;
     private bool    _netActive;
+    private bool    _hanamiActive;
     public  List<string> ScriptArgs { get; set; } = [];
 
     // Each scope holds variable values and a set of const names.
@@ -135,6 +136,9 @@ class Interpreter
 
                 if (pkg.Name.Equals("Net", StringComparison.OrdinalIgnoreCase))
                     _netActive = true;
+
+                if (pkg.Name.Equals("Hanami", StringComparison.OrdinalIgnoreCase))
+                    _hanamiActive = true;
 
                 continue;
             }
@@ -252,10 +256,24 @@ class Interpreter
 
             case IndexAssignStmt ia:
                 var indexTarget = GetVar(ia.Name);
+                // Walk through all but the last index to reach the innermost container.
+                for (int ii = 0; ii < ia.Indices.Count - 1; ii++)
+                {
+                    var key = Eval(ia.Indices[ii]);
+                    indexTarget = indexTarget switch
+                    {
+                        List<object?> l => l[NormalizeIndex((int)ToNumber(key), l.Count)],
+                        Dictionary<string, object?> d => d.TryGetValue(Stringify(key), out var v) ? v
+                            : throw new MakoError($"key '{Stringify(key)}' not found in dict"),
+                        _ => throw new MakoError(
+                            $"cannot index into {TypeName(indexTarget)} — '{ia.Name}' chain must be lists or dicts"),
+                    };
+                }
+                var lastIndex = Eval(ia.Indices[^1]);
                 if (indexTarget is List<object?> lst)
-                    lst[NormalizeIndex((int)ToNumber(Eval(ia.Index)), lst.Count)] = Eval(ia.Value);
+                    lst[NormalizeIndex((int)ToNumber(lastIndex), lst.Count)] = Eval(ia.Value);
                 else if (indexTarget is Dictionary<string, object?> dictTarget)
-                    dictTarget[Stringify(Eval(ia.Index))] = Eval(ia.Value);
+                    dictTarget[Stringify(lastIndex)] = Eval(ia.Value);
                 else
                     throw new MakoError(
                         $"cannot assign by index into {TypeName(indexTarget)} — '{ia.Name}' must be a list or dict");
@@ -638,6 +656,16 @@ class Interpreter
         "Net.get", "Net.post", "Net.put", "Net.delete",
         "Net.ok", "Net.status", "Net.body", "Net.error", "Net.json",
         "Net.url_encode", "Net.url_decode",
+        // Hanami — lighting engine
+        "Hanami.set_mode", "Hanami.get_mode", "Hanami.set_ambient",
+        "Hanami.add_light", "Hanami.remove_light", "Hanami.set_light_pos",
+        "Hanami.set_light_color", "Hanami.set_light_intensity", "Hanami.set_light_range",
+        "Hanami.set_light_enabled", "Hanami.light_count", "Hanami.light_info",
+        "Hanami.add_occluder", "Hanami.remove_occluder", "Hanami.clear_occluders", "Hanami.clear_lights",
+        "Hanami.light_at", "Hanami.shade", "Hanami.bake", "Hanami.is_baked",
+        "Hanami.voxel_init", "Hanami.voxel_set_solid", "Hanami.voxel_set_emissive",
+        "Hanami.voxel_bake", "Hanami.voxel_light", "Hanami.voxel_color", "Hanami.voxel_solid",
+        "Hanami.save_config", "Hanami.load_config", "Hanami.reset",
     ];
 
     private bool TryBuiltin(string name, List<object?> args, out object? result)
@@ -1366,6 +1394,14 @@ class Interpreter
                     if (MakoNet.Funcs.TryGetValue(fnN, out var fnNe))
                         { result = fnNe(args); return true; }
                     throw new MakoError($"Net.{fnN}() wasn't found");
+                }
+                if (name.StartsWith("Hanami.", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!_hanamiActive) throw new MakoError($"{name}() requires 'using Hanami;'");
+                    var fnH = name["Hanami.".Length..];
+                    if (Hanami.Funcs.TryGetValue(fnH, out var fnHa))
+                        { result = fnHa(args); return true; }
+                    throw new MakoError($"Hanami.{fnH}() wasn't found");
                 }
                 return false;
         }

@@ -254,16 +254,20 @@ class Parser
             return new ExprStmt(call);
         }
 
-        // Index assignment: name[idx] = expr;
+        // Index assignment: name[idx] = expr;   /   name[i][j] = expr;   (any number of [...])
         if (Check(TokenType.LBracket))
         {
-            var openBr = Advance(); // [
-            var idx = ParseExpr();
-            ExpectClosing(TokenType.RBracket, "]", openBr);
+            var indices = new List<Expr>();
+            while (Check(TokenType.LBracket))
+            {
+                var openBr = Advance(); // [
+                indices.Add(ParseExpr());
+                ExpectClosing(TokenType.RBracket, "]", openBr);
+            }
             Expect(TokenType.Assign, "missing '=' after index");
             var rhs = ParseExpr();
             Expect(TokenType.Semicolon, "index assignment");
-            return new IndexAssignStmt(name, idx, rhs);
+            return new IndexAssignStmt(name, indices, rhs);
         }
 
         // Compound or plain assignment

@@ -122,6 +122,8 @@ All examples install globally. Run these from any directory:
 | `mko ui_demo.mko`      | Dear ImGui desktop UI — menus, tables, modals, cherry-blossom theme      |
 | `mko sound_3d.mko`     | 3D positional audio — beacons that pan and fade as you fly               |
 | `mko input_test.mko`   | Visual input tester — every key/button lights up live                    |
+| `mko hanami_demo.mko`  | One scene, five lighting modes — unlit/baked/realtime/mixed/voxel, switch live with 1-5 |
+| `mko hanami_lighting_manager.mko` | Visual lighting editor (MakoUI) — place lights, bake, save a config your game loads |
 
 ---
 
@@ -211,6 +213,7 @@ using mylib from "github:User/Repo";
 | `using Inputs;` | Unified input: keyboard, mouse, cursor lock, gamepad                                 |
 | `using Audio;`  | Sound files, synthesizer, music streaming, 2D/3D positional sound, 8-voice polyphony |
 | `using Net;`    | HTTP requests (GET/POST/PUT/DELETE) + JSON encode/decode                            |
+| `using Hanami;` | Lighting engine — unlit/baked/realtime/mixed/voxel modes, shadows, baking             |
 | `using MakoUI;` | Desktop UIs via Dear ImGui: windows, menus, tables, modals, themes                   |
 
 Game-dev builtins are available without an import:
@@ -447,6 +450,7 @@ MAKO is not trying to replace large engines like Modularity. The goal is to make
 * [Inputs](docs/inputs.md)
 * [Audio](docs/audio.md)
 * [Net](docs/net.md) — HTTP requests and JSON
+* [Hanami](docs/hanami.md) — lighting engine: modes, shadows, baking, voxel light, the Lighting Manager tool
 * [MakoUI](docs/makoui.md)
 * [Game development guide](docs/games.md) — delta time, collision, AI patterns, positional audio
 

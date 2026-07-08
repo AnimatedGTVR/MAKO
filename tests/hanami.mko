@@ -1,0 +1,160 @@
+using Hanami;
+
+# Hanami is headless (no window), so its lighting math is fully testable here.
+
+main() {
+    Hanami.reset();
+
+    # ── Modes ────────────────────────────────────────────────────────────────
+    assert(Hanami.get_mode() == "realtime", "default mode is realtime");
+    Hanami.set_mode("unlit");
+    assert(Hanami.get_mode() == "unlit", "set_mode changes the mode");
+
+    caught = false;
+    try { Hanami.set_mode("bogus"); } catch err { caught = true; }
+    assert(caught, "an unknown mode is rejected");
+
+    # ── Unlit: always full white, regardless of lights ──────────────────────
+    Hanami.set_mode("unlit");
+    Hanami.add_light("point", 0, 5, 0,  1, 0, 0,  5, 20);
+    c = Hanami.light_at(0, 0, 0);
+    assert(c[0] == 1 and c[1] == 1 and c[2] == 1, "unlit always returns full white");
+    Hanami.reset();
+
+    # ── Ambient only, no lights ──────────────────────────────────────────────
+    Hanami.set_mode("realtime");
+    Hanami.set_ambient(0.2, 0.3, 0.4, 1);
+    c = Hanami.light_at(0, 0, 0);
+    assert(abs(c[0] - 0.2) < 0.001, "ambient red channel");
+    assert(abs(c[1] - 0.3) < 0.001, "ambient green channel");
+    assert(abs(c[2] - 0.4) < 0.001, "ambient blue channel");
+
+    # ── Point light falloff ──────────────────────────────────────────────────
+    Hanami.reset();
+    Hanami.set_ambient(0, 0, 0, 1);
+    light = Hanami.add_light("point", 0, 0, 0,  1, 1, 1,  1.0, 10);
+    near = Hanami.light_at(0, 0, 0.5);
+    far  = Hanami.light_at(0, 0, 9.9);
+    outside = Hanami.light_at(0, 0, 20);
+    assert(near[0] > far[0], "closer to a point light is brighter");
+    assert(outside[0] == 0, "outside a point light's range gets zero contribution");
+
+    # ── Light handle management ─────────────────────────────────────────────
+    assert(Hanami.light_count() == 1, "light_count after one add_light");
+    info = Hanami.light_info(light);
+    assert(info["type"] == "point", "light_info reports type");
+    assert(info["range"] == 10, "light_info reports range");
+
+    Hanami.set_light_intensity(light, 5);
+    brighter = Hanami.light_at(0, 0, 0.5);
+    assert(brighter[0] > near[0], "set_light_intensity changes output");
+
+    Hanami.set_light_enabled(light, false);
+    off = Hanami.light_at(0, 0, 0.5);
+    assert(off[0] == 0, "a disabled light contributes nothing");
+
+    Hanami.remove_light(light);
+    assert(Hanami.light_count() == 0, "remove_light removes it");
+    assert(Hanami.light_info(light) == none, "light_info on a removed light is none");
+
+    # ── Directional light: no distance falloff ──────────────────────────────
+    Hanami.reset();
+    Hanami.set_ambient(0, 0, 0, 1);
+    Hanami.add_light("directional", 0, -1, 0,  1, 1, 1,  1.0);
+    close_pt = Hanami.light_at(0, 0, 0);
+    far_pt   = Hanami.light_at(0, 0, 1000);
+    assert(abs(close_pt[0] - far_pt[0]) < 0.001, "directional light doesn't fall off with distance");
+
+    # ── Occluders block light (shadows) ──────────────────────────────────────
+    Hanami.reset();
+    Hanami.set_ambient(0, 0, 0, 1);
+    Hanami.add_light("point", 0, 0, 10,  1, 1, 1,  2.0, 30);
+    lit_before = Hanami.light_at(0, 0, 0);
+    assert(lit_before[0] > 0, "point is lit before any occluder exists");
+
+    Hanami.add_occluder(0, 0, 5,  4, 4, 4);   # wall directly between point and light
+    lit_after = Hanami.light_at(0, 0, 0);
+    assert(lit_after[0] == 0, "an occluder between the point and the light casts a shadow");
+
+    beside = Hanami.light_at(10, 0, 0);        # well off to the side, wall doesn't block it
+    assert(beside[0] > 0, "a point not behind the occluder is still lit");
+
+    # ── shade() combines a base color with a light result ───────────────────
+    col = Hanami.shade([200, 100, 50, 255], [0.5, 1.0, 2.0]);
+    assert(col[0] == 100, "shade multiplies red");
+    assert(col[1] == 100, "shade multiplies green");
+    assert(col[2] == 100, "shade multiplies blue"); # 50 * 2.0 = 100
+    assert(col[3] == 255, "shade preserves alpha");
+
+    over = Hanami.shade([200, 200, 200, 255], [2, 2, 2]);
+    assert(over[0] == 255, "shade clamps overbright values to 255");
+
+    # ── Baking ────────────────────────────────────────────────────────────────
+    Hanami.reset();
+    Hanami.set_mode("baked");
+    Hanami.set_ambient(0.1, 0.1, 0.1, 1);
+    assert(not Hanami.is_baked(), "is_baked is false before the first bake()");
+
+    Hanami.add_light("point", 0, 0, 0,  1, 1, 1,  3.0, 20, true);  # is_static = true
+    Hanami.bake(-10, -10, -10,  10, 10, 10,  5);
+    assert(Hanami.is_baked(), "is_baked is true after bake()");
+
+    baked_near = Hanami.light_at(0, 0, 1);
+    baked_far  = Hanami.light_at(9, 9, 9);
+    assert(baked_near[0] > baked_far[0], "baked probes still capture distance falloff");
+
+    # A non-static light added after baking must NOT show up in "baked" mode
+    # (it only matters in "mixed" mode) — baked mode is frozen at bake time.
+    Hanami.add_light("point", 5, 5, 5,  1, 1, 1,  10.0, 20, false);
+    still_same = Hanami.light_at(0, 0, 1);
+    assert(still_same[0] == baked_near[0], "baked mode ignores lights added after baking");
+
+    # ── Mixed mode: baked statics + live realtime lights ─────────────────────
+    Hanami.set_mode("mixed");
+    mixed_val = Hanami.light_at(0, 0, 1);
+    assert(mixed_val[0] >= baked_near[0], "mixed mode includes at least the baked contribution");
+
+    # ── Voxel grid + light propagation ───────────────────────────────────────
+    Hanami.reset();
+    Hanami.voxel_init(5, 5, 5);
+    assert(Hanami.voxel_light(2, 2, 2) == 0, "voxel light starts at zero everywhere");
+
+    Hanami.voxel_set_emissive(2, 2, 2, 15);
+    Hanami.voxel_bake();
+    assert(Hanami.voxel_light(2, 2, 2) == 15, "the emissive source cell keeps its full level");
+    assert(Hanami.voxel_light(3, 2, 2) == 14, "light attenuates by one per step");
+    assert(Hanami.voxel_light(4, 2, 2) == 13, "light keeps attenuating with distance");
+
+    Hanami.voxel_set_solid(3, 2, 2, true);
+    Hanami.voxel_bake();
+    assert(Hanami.voxel_solid(3, 2, 2), "voxel_solid reports the wall");
+    assert(Hanami.voxel_light(4, 2, 2) < 13, "a wall blocks/reroutes light propagation");
+
+    col2 = Hanami.voxel_color(2, 2, 2, [100, 100, 100, 255]);
+    assert(col2[0] > 90, "voxel_color scales a base color by full light level");
+    dark = Hanami.voxel_color(0, 0, 0, [100, 100, 100, 255]);
+    assert(dark[0] < col2[0], "an unlit voxel cell is darker than a lit one");
+
+    # ── Config round-trip ─────────────────────────────────────────────────────
+    Hanami.reset();
+    Hanami.set_mode("mixed");
+    Hanami.set_ambient(0.1, 0.2, 0.3, 0.9);
+    Hanami.add_light("point", 1, 2, 3,  0.9, 0.8, 0.7,  2.5, 15, true);
+    Hanami.add_occluder(0, 0, 0,  2, 2, 2);
+    Hanami.save_config("/tmp/hanami_test_config.json");
+
+    Hanami.reset();
+    assert(Hanami.light_count() == 0, "reset clears lights");
+
+    Hanami.load_config("/tmp/hanami_test_config.json");
+    assert(Hanami.get_mode() == "mixed", "load_config restores mode");
+    assert(Hanami.light_count() == 1, "load_config restores lights");
+    info2 = Hanami.light_info(0);
+    assert(abs(info2["x"] - 1) < 0.001, "load_config restores light position");
+    assert(abs(info2["intensity"] - 2.5) < 0.001, "load_config restores light intensity");
+    assert(info2["is_static"] == true, "load_config restores is_static flag");
+
+    delete("/tmp/hanami_test_config.json");
+
+    print "Hanami: all lighting engine tests pass!";
+}

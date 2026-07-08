@@ -9,6 +9,19 @@ main() {
     xs[0] = 99;
     assert(xs[0] == 99, "index assign");
 
+    grid = [[1, 2], [3, 4]];
+    grid[0][1] = 99;
+    assert(grid[0][1] == 99, "chained index assign — two levels");
+    assert(grid[1][0] == 3, "chained index assign doesn't disturb other cells");
+
+    cube = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]];
+    cube[1][0][1] = 100;
+    assert(cube[1][0][1] == 100, "chained index assign — three levels");
+
+    mixed_nest = {"list": [1, 2, 3]};
+    mixed_nest["list"][1] = 42;
+    assert(mixed_nest["list"][1] == 42, "chained index assign through a dict into a list");
+
     push(xs, 4);
     assert(len(xs) == 4, "push");
     assert(last(xs) == 4, "push value");

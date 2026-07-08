@@ -171,7 +171,7 @@ static class Formatter
                     break;
 
                 case IndexAssignStmt ia:
-                    Line($"{ia.Name}[{Expr(ia.Index)}] = {Expr(ia.Value)};");
+                    Line($"{ia.Name}{string.Concat(ia.Indices.Select(idx => $"[{Expr(idx)}]"))} = {Expr(ia.Value)};");
                     break;
 
                 case IfStmt i:

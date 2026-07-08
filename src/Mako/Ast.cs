@@ -43,8 +43,8 @@ record PrintnlStmt(Expr Value) : Statement;
 /// name = expr;  /  name += expr;  etc.
 record AssignStmt(string Name, Expr Value) : Statement;
 
-/// name[idx] = expr;
-record IndexAssignStmt(string Name, Expr Index, Expr Value) : Statement;
+/// name[idx] = expr;   /   name[i][j] = expr;   (Indices holds one entry per '[...]')
+record IndexAssignStmt(string Name, List<Expr> Indices, Expr Value) : Statement;
 
 /// if condition { ... } else { ... }
 record IfStmt(Expr Condition, List<Statement> Then, List<Statement> Else) : Statement;

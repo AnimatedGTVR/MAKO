@@ -1,0 +1,152 @@
+using Mako3D;
+using Inputs;
+using Hanami;
+
+# Hanami lighting demo — one scene, five lighting modes.
+#
+#   1  Unlit     — flat colors, no lighting math at all
+#   2  Baked     — a static light precomputed once into a probe grid
+#   3  Realtime  — a moving light recomputed every frame, casts real shadows
+#   4  Mixed     — the baked static light + a live moving light together
+#   5  Voxel     — a small block room lit by grid-based light propagation
+#
+# WASD/arrows fly, Q/E up/down, middle mouse orbits, scroll zooms.
+# L loads hanami_config.json if you've built one with the Lighting Manager.
+
+const MODES = ["unlit", "baked", "realtime", "mixed", "voxel"];
+
+fn setup_scene() {
+    Hanami.reset();
+    Hanami.set_ambient(0.06, 0.06, 0.09, 1);
+
+    # A static light for baked/mixed modes
+    Hanami.add_light("point", -4, 4, -4,  1.0, 0.85, 0.6,  3.0, 18, true);
+    # A wall that casts real shadows
+    Hanami.add_occluder(0, 1.5, 0,  1, 3, 6);
+
+    Hanami.bake(-12, -12, -12,  12, 12, 12,  6);
+}
+
+main() {
+    Mako3D.init(960, 640, "Hanami Lighting Demo");
+    Mako3D.fps(60);
+
+    cam = Mako3D.camera(12, 9, 12,  0, 1, 0);
+    setup_scene();
+
+    mode_i = 2; # start on realtime
+    Hanami.set_mode(MODES[mode_i]);
+
+    # Moving light for realtime/mixed
+    move_light = Hanami.add_light("point", 6, 3, 0,  0.4, 0.7, 1.0,  4.0, 16, false);
+    t = 0;
+
+    # Small voxel room for mode 5
+    Hanami.voxel_init(9, 5, 9);
+    vx = 0;
+    while vx < 9 {
+        vz = 0;
+        while vz < 9 {
+            edge = vx == 0 or vx == 8 or vz == 0 or vz == 8;
+            if edge { Hanami.voxel_set_solid(vx, 0, vz, true); }
+            vz = vz + 1;
+        }
+        vx = vx + 1;
+    }
+    Hanami.voxel_set_emissive(4, 1, 4, 15);   # a torch in the middle
+    Hanami.voxel_bake();
+
+    while Mako3D.running() {
+        dt = Mako3D.delta();
+        t = t + dt;
+        Mako3D.update_camera(cam, 10);
+
+        i = 0;
+        while i < 5 {
+            if Inputs.key_pressed(to_str(i + 1)) {
+                mode_i = i;
+                Hanami.set_mode(MODES[mode_i]);
+            }
+            i = i + 1;
+        }
+        if Inputs.key_pressed("L") {
+            try {
+                Hanami.load_config("hanami_config.json");
+                mode_i = 0;
+                j = 0;
+                while j < 5 { if MODES[j] == Hanami.get_mode() { mode_i = j; } j = j + 1; }
+            } catch err { }
+        }
+
+        # Orbit the moving light around the scene for realtime/mixed
+        Hanami.set_light_pos(move_light, cos(t) * 7, 2.5 + sin(t * 1.3), sin(t) * 7);
+
+        Mako3D.begin();
+        Mako3D.clear(Mako3D.color(12, 12, 18));
+
+        if MODES[mode_i] == "voxel" {
+            # ── Voxel room ────────────────────────────────────────────────
+            Mako3D.begin_3d(cam);
+            Mako3D.grid(20, 1);
+            vx = 0;
+            while vx < 9 {
+                vz = 0;
+                while vz < 9 {
+                    if Hanami.voxel_solid(vx, 0, vz) {
+                        col = Hanami.voxel_color(vx, 0, vz, Mako3D.LIGHTGRAY);
+                        Mako3D.cube_raw(vx - 4, 1, vz - 4,  1, 2, 1, col);
+                    }
+                    vz = vz + 1;
+                }
+                vx = vx + 1;
+            }
+            floor_col = Hanami.voxel_color(4, 1, 4, Mako3D.color(90, 70, 50));
+            Mako3D.plane(0, 0, 0, 9, 9, floor_col);
+            torch_col = Hanami.voxel_color(4, 1, 4, Mako3D.GOLD);
+            Mako3D.sphere(0, 1, 0, 0.3, torch_col);
+            Mako3D.end_3d();
+        } else {
+            # ── Standard scene (unlit / baked / realtime / mixed) ────────────
+            Mako3D.begin_3d(cam);
+            Mako3D.grid(20, 1);
+
+            floor_light = Hanami.light_at(0, 0, 0);
+            Mako3D.plane(0, 0, 0, 24, 24, Hanami.shade(Mako3D.color(60, 62, 70), floor_light));
+
+            # Occluder wall — visualized so you can see what casts the shadow
+            wall_light = Hanami.light_at(0, 1.5, 0);
+            Mako3D.cube_raw(0, 1.5, 0,  1, 3, 6, Hanami.shade(Mako3D.DARKGRAY, wall_light));
+
+            # A few props scattered around, each shaded independently
+            props = [[-4,1,-4, 250,80,80], [3,1,2, 80,200,250], [-2,1,4, 250,220,90],
+                     [5,1,-3, 160,250,140], [0,1,-6, 220,150,250]];
+            i = 0;
+            while i < len(props) {
+                p = props[i];
+                lit = Hanami.light_at(p[0], p[1], p[2]);
+                col = Hanami.shade([p[3], p[4], p[5], 255], lit);
+                Mako3D.cube(p[0], p[1], p[2],  1.4, 1.4, 1.4, col);
+                i = i + 1;
+            }
+
+            # The moving light itself, drawn unlit so it's always visible
+            mv = Hanami.light_at(cos(t) * 7, 2.5 + sin(t * 1.3), sin(t) * 7);
+            Mako3D.sphere(cos(t) * 7, 2.5 + sin(t * 1.3), sin(t) * 7,  0.25, Mako3D.SKYBLUE);
+
+            Mako3D.end_3d();
+        }
+
+        # ── HUD ──────────────────────────────────────────────────────────────
+        Mako3D.text("Hanami — {upper(MODES[mode_i])} mode", 10, 10, 22, Mako3D.WHITE);
+        Mako3D.text("1 Unlit  2 Baked  3 Realtime  4 Mixed  5 Voxel   L load config", 10, 36, 15, Mako3D.LIGHTGRAY);
+        Mako3D.text("WASD/arrows fly, Q/E up/down, middle mouse orbit, scroll zoom", 10, 54, 15, Mako3D.LIGHTGRAY);
+        baked_txt = "not baked";
+        if Hanami.is_baked() { baked_txt = "baked"; }
+        Mako3D.text("lights: {Hanami.light_count()}   probes: {baked_txt}", 10, 76, 15, Mako3D.GRAY);
+        Mako3D.draw_fps(880, 10);
+
+        Mako3D.end();
+    }
+
+    Mako3D.close();
+}
