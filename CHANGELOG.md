@@ -6,6 +6,17 @@ All notable changes to MAKO are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+**Segfault on exit after closing a raylib window.** raylib's `CloseWindow`
+tears down GL/GLFW unconditionally, so closing twice crashed the process
+(`GLFW: Error: 65537` + SIGSEGV after "Window closed successfully"). This hit
+any `MakoRay` script that called `close()` itself — the interpreter's cleanup
+then closed again. Now `close()` in `MakoRay`/`Mako2D`/`Mako3D` is idempotent,
+interpreter cleanup only closes a still-open window (and now also closes
+windows that `Mako2D`/`Mako3D` scripts forgot to close), and `UnloadAll` skips
+GPU unloads once the GL context is gone.
+
 ### Error reporting overhaul
 
 **Precise carets.** The lexer now tracks columns, and every token records where

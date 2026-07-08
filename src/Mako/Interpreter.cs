@@ -40,9 +40,16 @@ class Interpreter
         finally
         {
             _ui?.Dispose(); _ui = null;
-            if (_rayActive)   { Raylib_cs.Raylib.CloseWindow(); _rayActive   = false; }
-            if (_ray2DActive) { MakoRay2D.UnloadAll(); _ray2DActive = false; }
-            if (_ray3DActive) { MakoRay3D.UnloadAll(); _ray3DActive = false; }
+            // GPU resources must be freed while the window (GL context) is
+            // still alive, and CloseWindow must run at most once per process —
+            // raylib tears down GL/GLFW unconditionally, so a second close
+            // (script already called close()) segfaults on exit.
+            bool hadWindow = _rayActive || _ray2DActive || _ray3DActive;
+            if (_ray2DActive) MakoRay2D.UnloadAll();
+            if (_ray3DActive) MakoRay3D.UnloadAll();
+            if (hadWindow && Raylib_cs.Raylib.IsWindowReady())
+                Raylib_cs.Raylib.CloseWindow();
+            _rayActive = _ray2DActive = _ray3DActive = false;
         }
     }
 

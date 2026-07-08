@@ -59,7 +59,9 @@ static class MakoRay
 
     public static object? Close(List<object?> _)
     {
-        Raylib.CloseWindow();
+        // Idempotent: raylib's CloseWindow has no already-closed guard and
+        // a double teardown of GL/GLFW segfaults.
+        if (Raylib.IsWindowReady()) Raylib.CloseWindow();
         return null;
     }
 

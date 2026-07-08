@@ -48,7 +48,7 @@ static class MakoRay2D
     public static object? Running(List<object?> _)    => (object?)(!Raylib.WindowShouldClose());
     public static object? Begin(List<object?> _)      { Raylib.BeginDrawing(); return null; }
     public static object? End(List<object?> _)        { Raylib.EndDrawing();   return null; }
-    public static object? Close(List<object?> _)      { Raylib.CloseWindow();  return null; }
+    public static object? Close(List<object?> _)      { if (Raylib.IsWindowReady()) Raylib.CloseWindow(); return null; }
     public static object? Delta(List<object?> _)      => (object?)(double)Raylib.GetFrameTime();
     public static object? GetFps(List<object?> _)     => (object?)(double)Raylib.GetFPS();
     public static object? Width(List<object?> _)      => (object?)(double)Raylib.GetScreenWidth();
@@ -295,7 +295,9 @@ static class MakoRay2D
 
     public static void UnloadAll()
     {
-        foreach (var t in _textures) Raylib.UnloadTexture(t);
+        // GPU unloads need a live GL context; skip them if the window is gone.
+        if (Raylib.IsWindowReady())
+            foreach (var t in _textures) Raylib.UnloadTexture(t);
         _textures.Clear();
         _cameras.Clear();
     }
