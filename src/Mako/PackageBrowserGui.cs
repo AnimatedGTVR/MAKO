@@ -54,8 +54,8 @@ static class PackageBrowserGui
                 var matches = PackageRegistry.Search(query).ToList();
                 ImGui.Spacing();
 
-                bool looksLikeGithub = query.StartsWith("github:", StringComparison.OrdinalIgnoreCase)
-                    && GithubPackageLookup.TryParseSource(query, out _, out _);
+                bool typedGithub = query.StartsWith("github:", StringComparison.OrdinalIgnoreCase);
+                bool looksLikeGithub = typedGithub && GithubPackageLookup.TryParseSource(query, out _, out _);
                 if (looksLikeGithub)
                 {
                     var lookupLabel = $"Look up {query} (GitHub) ->";
@@ -76,6 +76,15 @@ static class PackageBrowserGui
                     }
                     ImGui.Separator();
                 }
+                else if (typedGithub)
+                {
+                    // Typed "github:" but not "github:User/Repo" — e.g. a
+                    // colon where a slash belongs. Say so instead of just
+                    // silently falling through to "No matches" with no clue
+                    // why a github: query isn't offering a lookup.
+                    ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1f), "Format: github:User/Repo");
+                    ImGui.Separator();
+                }
 
                 foreach (var e in matches)
                 {
@@ -83,7 +92,7 @@ static class PackageBrowserGui
                     if (ImGui.Selectable(label, e.Name == current))
                         current = e.Name;
                 }
-                if (matches.Count == 0 && !looksLikeGithub)
+                if (matches.Count == 0 && !typedGithub)
                     ImGui.TextDisabled("No matches.");
                 ImGui.EndChild();
 
