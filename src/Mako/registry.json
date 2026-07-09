@@ -28,7 +28,15 @@
     "status": "available",
     "description": "3D rendering - camera, primitives, models, a scene/object system, and Blender-style mesh editing.",
     "usage": "using Mako3D;",
-    "docs": "docs/mako3d.md"
+    "docs": "docs/mako3d.md",
+    "versions": [
+      {
+        "name": "MakoVR",
+        "description": "VR headset support for Mako3D scenes - planned, not implemented yet.",
+        "status": "planned",
+        "note": "No VR runtime is wired up. Tracked as a future addition to Mako3D; there's nothing to install or use yet."
+      }
+    ]
   },
   {
     "name": "Inputs",
@@ -53,12 +61,5 @@
     "description": "HTTP requests (GET/POST) plus JSON encode/decode for talking to web APIs.",
     "usage": "using Net;",
     "docs": "docs/net.md"
-  },
-  {
-    "name": "MakoVR",
-    "kind": "native",
-    "status": "planned",
-    "description": "VR headset support - planned, not implemented yet.",
-    "note": "No VR runtime is wired up. Tracked as a future package; there's nothing to install or use yet."
   }
 ]

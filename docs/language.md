@@ -175,6 +175,8 @@ using coollib from "github:Someone/coollib";
 
 Not sure what's out there? `mko search` opens a graphical package browser
 (`--term` for plain text); `mko info <pkg>` shows one package's details.
+Point either at a specific repo — `mko search github:User/Repo` — to fetch
+its `mako.json` manifest live and preview it before installing.
 
 ## Shell & input
 

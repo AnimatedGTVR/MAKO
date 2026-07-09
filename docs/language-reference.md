@@ -577,6 +577,26 @@ main() {
 GitHub) — pass `--term` for a plain-text listing instead. `mko info <pkg>` shows
 one package's description, status, and exact `using` line.
 
+### Discovering a GitHub package before installing it
+
+`mko search github:User/Repo` / `mko info github:User/Repo` fetch that repo's
+`mako.json` manifest live (no cloning) and show it the same way as a registry
+entry. A repo needs a `mako.json` at its root to be discoverable this way:
+
+```json
+{
+  "name": "CoolLib",
+  "description": "Does cool things.",
+  "version": "1.2.0",
+  "usage": "using coollib from \"github:Someone/coollib\";"
+}
+```
+
+`name`/`description` are required; `version` and `usage` are optional (`usage`
+defaults to `using <name> from "github:User/Repo";` if omitted). A repo with
+no `mako.json` isn't an error to have — `using X from "github:...";` still
+works without one — it just won't show up in `mko search`/`mko info` lookups.
+
 ---
 
 ## Error handling

@@ -255,6 +255,12 @@ if (args[0] == "search")
     bool termOnly = args.Contains("--term");
     string? query = args.Where(a => !a.StartsWith('-')).Skip(1).FirstOrDefault();
 
+    // A "github:User/Repo" query is a targeted lookup of one specific repo's
+    // mako.json manifest, not a fuzzy match against the local registry —
+    // same live-fetch path as `mko info github:...` below.
+    if (query != null && query.StartsWith("github:", StringComparison.OrdinalIgnoreCase))
+        return RunGithubLookup(query, termOnly);
+
     if (!termOnly)
     {
         try { PackageBrowserGui.Run(query); return 0; }
@@ -278,11 +284,15 @@ if (args[0] == "info")
     string pkgQuery = args[1];
     bool termOnly = args.Contains("--term");
 
+    if (pkgQuery.StartsWith("github:", StringComparison.OrdinalIgnoreCase))
+        return RunGithubLookup(pkgQuery, termOnly);
+
     var entry = PackageRegistry.Find(pkgQuery);
     if (entry == null)
     {
         Console.Error.WriteLine($"mko: no package named '{pkgQuery}' in the registry.");
-        Console.Error.WriteLine($"  Tip: run 'mko search {pkgQuery}' to look for something close.");
+        Console.Error.WriteLine($"  Tip: run 'mko search {pkgQuery}' to look for something close, " +
+                                 "or 'mko info github:User/Repo' to look up a specific repo.");
         return 1;
     }
 
@@ -443,7 +453,40 @@ static string InstallStatusLine(RegistryEntry e)
     if (PackageManager.NativePackages.Contains(e.Name)) return "built in — no install needed";
     var installed = PackageManager.ListInstalled().Any(p =>
         string.Equals(p.Name, e.Name, StringComparison.OrdinalIgnoreCase));
-    return installed ? "installed" : "not installed — run 'mko get " + e.Name + "'";
+    if (installed) return "installed";
+    var getCmd = e.Kind == "github" && e.Source != null
+        ? $"mko get {e.Name} {e.Source}"
+        : $"mko get {e.Name}";
+    return $"not installed — run '{getCmd}'";
+}
+
+// Fetches a github:User/Repo package's mako.json manifest live and shows it,
+// same as a registry entry — the GUI/--term split mirrors search/info above.
+static int RunGithubLookup(string source, bool termOnly)
+{
+    RegistryEntry entry;
+    Console.Error.WriteLine($"mko: fetching {source} ...");
+    try
+    {
+        entry = GithubPackageLookup.Fetch(source);
+    }
+    catch (MakoError ex)
+    {
+        Console.Error.WriteLine($"mko: {ex.RawMessage}");
+        return 1;
+    }
+
+    if (!termOnly)
+    {
+        try { PackageBrowserGui.RunSingle(entry); return 0; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"mko: couldn't open the graphical browser ({ex.Message}) — falling back to text.");
+        }
+    }
+
+    PrintPackageInfo(entry);
+    return 0;
 }
 
 static void PrintSearchResults(string? query)
@@ -487,9 +530,11 @@ static void PrintPackageInfo(RegistryEntry e)
         Console.WriteLine("Versions:");
         foreach (var v in e.Versions)
         {
-            Console.WriteLine($"  {v.Name}");
+            var badge = v.Status == "planned" ? " [planned]" : "";
+            Console.WriteLine($"  {v.Name}{badge}");
             Console.WriteLine($"    {v.Description}");
             if (v.Usage != null) Console.WriteLine($"    Usage: {v.Usage}");
+            if (v.Note != null) Console.WriteLine($"    Note:  {v.Note}");
         }
     }
 }
@@ -511,6 +556,8 @@ static void PrintHelp()
       mko search [query] [--term]   Browse/search known packages (opens a GUI window;
                                      --term prints plain text instead)
       mko info <pkg> [--term]       Show details on one package
+      mko search github:U/R         Fetch a repo's mako.json and preview it
+      mko info github:U/R           (same, single-package view) — no install
       mko version                   Show version
       mko help                      Show this help
 

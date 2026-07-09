@@ -28,6 +28,8 @@ sealed record RegistryVariant
     [JsonPropertyName("name")]        public required string Name { get; init; }
     [JsonPropertyName("description")] public required string Description { get; init; }
     [JsonPropertyName("usage")]       public string? Usage { get; init; }
+    [JsonPropertyName("status")]      public string? Status { get; init; }  // defaults to the parent's status when absent
+    [JsonPropertyName("note")]        public string? Note { get; init; }
 }
 
 /// Package discovery — "what packages exist and what do they do," backed by

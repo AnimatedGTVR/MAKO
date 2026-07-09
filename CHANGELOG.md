@@ -8,6 +8,17 @@ All notable changes to MAKO are recorded here.
 
 ### Added
 
+**Live GitHub package lookup.** `mko search github:User/Repo` / `mko info
+github:User/Repo` fetch that repo's `mako.json` manifest straight from
+GitHub's API (no cloning) and preview it — name, description, version,
+usage line — the same way as a registry entry, before you decide whether to
+`mko get` it. A repo needs a `mako.json` at its root (`name`, `description`
+required; `version`/`usage` optional) to be discoverable this way; repos
+without one still work fine with `using X from "github:...";`, they just
+won't show up in search/info. **MakoVR** moved from a standalone registry
+entry to a version of **Mako3D** (VR is scoped as a 3D-rendering extension,
+not its own package) — same "planned, not implemented" status as before.
+
 **Package detail panel now has tabs.** The registry gained a `versions` field —
 other identities of the same package (MakoGUI is now listed as a version of
 MakoUI rather than its own top-level registry entry, so it no longer clutters

@@ -79,6 +79,38 @@ static class PackageBrowserGui
         }
     }
 
+    /// Single-entry view for a package that isn't in the local registry —
+    /// e.g. a live GitHub mako.json lookup. No search box/sidebar, since
+    /// there's nothing local to browse alongside it; just the same detail
+    /// panel, full width.
+    public static void RunSingle(RegistryEntry entry)
+    {
+        var ui = new MakoUI();
+        ui.Init($"MAKO Package Browser — {entry.Name}", 560, 400);
+
+        try
+        {
+            while (ui.Running())
+            {
+                ui.Begin();
+
+                var displaySize = ImGui.GetIO().DisplaySize;
+                ImGui.SetNextWindowPos(Vector2.Zero);
+                ImGui.SetNextWindowSize(displaySize);
+                ImGui.Begin("##browser_single", ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove);
+
+                DrawDetail(entry);
+
+                ImGui.End();
+                ui.End();
+            }
+        }
+        finally
+        {
+            ui.Dispose();
+        }
+    }
+
     private static void DrawDetail(RegistryEntry sel)
     {
         ImGui.TextColored(new Vector4(0.55f, 0.75f, 1f, 1f), sel.Name);
@@ -125,6 +157,8 @@ static class PackageBrowserGui
                 foreach (var v in sel.Versions)
                 {
                     ImGui.TextColored(new Vector4(0.55f, 0.75f, 1f, 1f), v.Name);
+                    if (v.Status == "planned")
+                        ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1f), "Planned - not yet available");
                     ImGui.TextWrapped(v.Description);
                     if (v.Usage != null)
                     {
@@ -133,6 +167,7 @@ static class PackageBrowserGui
                         var vUsage = v.Usage;
                         ImGui.InputText($"##usage_{v.Name}", ref vUsage, 128, ImGuiInputTextFlags.ReadOnly);
                     }
+                    if (v.Note != null) ImGui.TextWrapped(v.Note);
                     ImGui.Spacing();
                     ImGui.Separator();
                     ImGui.Spacing();
