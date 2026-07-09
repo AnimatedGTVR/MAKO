@@ -47,25 +47,39 @@ static class GithubPackageLookup
     /// Fetches mako.json from the repo root and returns it as a RegistryEntry
     /// (Kind "github"). Throws MakoError with a clear reason on any failure —
     /// repo doesn't exist, no mako.json, malformed manifest, network error.
+    /// Everything below is wrapped in one outer catch: this method must never
+    /// let a raw, non-MakoError exception escape, because its only caller in
+    /// PackageBrowserGui only catches MakoError — anything else unwinds out
+    /// of the whole ImGui frame loop and silently kills the browser window
+    /// with no visible error, which is exactly what a bare, unwrapped
+    /// ReadAsStringAsync() call used to risk here.
     public static RegistryEntry Fetch(string source)
     {
         if (!TryParseSource(source, out var owner, out var repo))
             throw new MakoError($"'{source}' doesn't look like 'github:User/Repo'");
 
+        try
+        {
+            return FetchInner(owner, repo);
+        }
+        catch (MakoError)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new MakoError($"couldn't fetch {owner}/{repo}: {ex.Message}");
+        }
+    }
+
+    private static RegistryEntry FetchInner(string owner, string repo)
+    {
         var url = $"https://api.github.com/repos/{owner}/{repo}/contents/mako.json";
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.UserAgent.ParseAdd("mako-cli");
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
 
-        HttpResponseMessage resp;
-        try
-        {
-            resp = Client.SendAsync(req).GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            throw new MakoError($"couldn't reach GitHub for '{owner}/{repo}': {ex.Message}");
-        }
+        var resp = Client.SendAsync(req).GetAwaiter().GetResult();
 
         if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
             throw new MakoError(
@@ -77,20 +91,16 @@ static class GithubPackageLookup
         if (!resp.IsSuccessStatusCode)
             throw new MakoError($"GitHub returned {(int)resp.StatusCode} for {owner}/{repo}: {raw}");
 
-        ContentsResponse contents;
-        try { contents = JsonSerializer.Deserialize<ContentsResponse>(raw) ?? throw new Exception("null"); }
-        catch (Exception ex) { throw new MakoError($"couldn't parse GitHub's response for {owner}/{repo}: {ex.Message}"); }
+        var contents = JsonSerializer.Deserialize<ContentsResponse>(raw)
+            ?? throw new MakoError($"couldn't parse GitHub's response for {owner}/{repo}");
 
         if (contents.Content == null)
             throw new MakoError($"GitHub's response for {owner}/{repo}/mako.json had no content");
 
-        string json;
-        try { json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(contents.Content.Replace("\n", ""))); }
-        catch (Exception ex) { throw new MakoError($"couldn't decode mako.json from {owner}/{repo}: {ex.Message}"); }
+        var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(contents.Content.Replace("\n", "")));
 
-        Manifest manifest;
-        try { manifest = JsonSerializer.Deserialize<Manifest>(json) ?? throw new Exception("null"); }
-        catch (Exception ex) { throw new MakoError($"{owner}/{repo}'s mako.json isn't valid JSON: {ex.Message}"); }
+        var manifest = JsonSerializer.Deserialize<Manifest>(json)
+            ?? throw new MakoError($"{owner}/{repo}'s mako.json isn't valid JSON");
 
         if (manifest.Name == null || manifest.Description == null)
             throw new MakoError($"{owner}/{repo}'s mako.json is missing 'name' or 'description'");

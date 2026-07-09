@@ -73,6 +73,17 @@ static class PackageBrowserGui
                             remoteError = ex.RawMessage;
                             current = GithubLookupSentinel;
                         }
+                        catch (Exception ex)
+                        {
+                            // Belt-and-suspenders: Fetch() is documented to
+                            // never let anything but MakoError escape, but if
+                            // that ever regresses, this is the difference
+                            // between "visible error in the detail panel" and
+                            // "the whole browser window silently closes."
+                            remoteEntry = null;
+                            remoteError = $"unexpected error: {ex.Message}";
+                            current = GithubLookupSentinel;
+                        }
                     }
                     ImGui.Separator();
                 }

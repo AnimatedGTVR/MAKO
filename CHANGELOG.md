@@ -6,6 +6,20 @@ All notable changes to MAKO are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+**GitHub lookup could silently close the whole browser window.**
+`GithubPackageLookup.Fetch()` had one un-wrapped call (reading the HTTP
+response body) that could throw something other than `MakoError`; its only
+caller in the package browser only caught `MakoError`, so anything else
+unwound straight out of the ImGui frame loop — the window just closed with
+no visible error. `--term` never showed this (its own catch is a plain
+`Exception`), which is why the CLI path looked fine while the GUI path
+looked like "nothing happens." Fetch() now wraps its entire body in one
+outer catch so nothing but `MakoError` can ever leave it, and the browser's
+call site now also catches `Exception` as a second layer, so a regression
+here shows an error message instead of a silently vanishing window.
+
 ### Added
 
 **Live GitHub package lookup.** `mko search github:User/Repo` / `mko info
