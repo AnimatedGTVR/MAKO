@@ -173,6 +173,9 @@ main() { print MathLib.square(8); }
 using coollib from "github:Someone/coollib";
 ```
 
+Not sure what's out there? `mko search` opens a graphical package browser
+(`--term` for plain text); `mko info <pkg>` shows one package's details.
+
 ## Shell & input
 
 ```mako

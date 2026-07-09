@@ -9,7 +9,9 @@ MakoUI runs in one of two modes:
 ## Standalone window
 
 Its own window (Silk.NET/OpenGL) — for tools and editors that don't need a
-3D/2D scene.
+3D/2D scene. This is what `mko search`/`mko info` list as **"MakoGUI"** — same
+package, same `MakoUI.init(...)` call, just a name for this specific use case
+(a plain desktop app, no game loop) so it's discoverable on its own.
 
 ```mako
 using MakoUI;

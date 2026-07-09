@@ -40,9 +40,14 @@ static class PackageManager
         if (Directory.Exists(dir)) return;
 
         if (!Registry.TryGetValue(name, out var url))
-            throw new MakoError(
-                $"unknown package '{name}' — not in the registry and not installed locally\n" +
-                $"  Tip: use 'using {name} from \"github:User/Repo\";' to specify where to get it");
+        {
+            var known = PackageRegistry.Find(name);
+            var tip = known != null
+                ? $"  Tip: run 'mko info {name}' — it's in the package registry ({known.Status})"
+                : $"  Tip: run 'mko search {name}' to look for something close, or use " +
+                  $"'using {name} from \"github:User/Repo\";' to specify where to get it";
+            throw new MakoError($"unknown package '{name}' — not in the registry and not installed locally\n{tip}");
+        }
 
         Clone(name, url, dir);
     }

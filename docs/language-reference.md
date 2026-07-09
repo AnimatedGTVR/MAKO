@@ -573,6 +573,9 @@ main() {
 ```
 
 `mko list` shows installed packages; `mko cache clear [pkg]` removes cached ones.
+`mko search [query]` opens a graphical browser of every known package (native and
+GitHub) — pass `--term` for a plain-text listing instead. `mko info <pkg>` shows
+one package's description, status, and exact `using` line.
 
 ---
 

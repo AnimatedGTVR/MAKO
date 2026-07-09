@@ -250,6 +250,55 @@ if (args[0] == "cache")
     return 1;
 }
 
+if (args[0] == "search")
+{
+    bool termOnly = args.Contains("--term");
+    string? query = args.Where(a => !a.StartsWith('-')).Skip(1).FirstOrDefault();
+
+    if (!termOnly)
+    {
+        try { PackageBrowserGui.Run(query); return 0; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"mko: couldn't open the graphical browser ({ex.Message}) — falling back to text.");
+        }
+    }
+
+    PrintSearchResults(query);
+    return 0;
+}
+
+if (args[0] == "info")
+{
+    if (args.Length < 2 || args[1].StartsWith('-'))
+    {
+        Console.Error.WriteLine("Usage: mko info <package> [--term]");
+        return 1;
+    }
+    string pkgQuery = args[1];
+    bool termOnly = args.Contains("--term");
+
+    var entry = PackageRegistry.Find(pkgQuery);
+    if (entry == null)
+    {
+        Console.Error.WriteLine($"mko: no package named '{pkgQuery}' in the registry.");
+        Console.Error.WriteLine($"  Tip: run 'mko search {pkgQuery}' to look for something close.");
+        return 1;
+    }
+
+    if (!termOnly)
+    {
+        try { PackageBrowserGui.Run(null, selected: entry.Name); return 0; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"mko: couldn't open the graphical browser ({ex.Message}) — falling back to text.");
+        }
+    }
+
+    PrintPackageInfo(entry);
+    return 0;
+}
+
 Console.Error.WriteLine($"mko: unknown command '{args[0]}'. Run 'mko help'.");
 return 1;
 
@@ -386,6 +435,53 @@ static void ReportError(MakoError ex, string mainSource)
     Console.Error.WriteLine($"mko: error ({where}): {ex.RawMessage}{hint}\n");
 }
 
+// Cross-checks a registry entry against what's actually installed/available
+// locally (PackageManager) so "available" doesn't just mean "in the registry."
+static string InstallStatusLine(RegistryEntry e)
+{
+    if (e.Status == "planned") return "not yet available";
+    if (PackageManager.NativePackages.Contains(e.Name)) return "built in — no install needed";
+    var installed = PackageManager.ListInstalled().Any(p =>
+        string.Equals(p.Name, e.Name, StringComparison.OrdinalIgnoreCase));
+    return installed ? "installed" : "not installed — run 'mko get " + e.Name + "'";
+}
+
+static void PrintSearchResults(string? query)
+{
+    var results = PackageRegistry.Search(query).ToList();
+    if (results.Count == 0)
+    {
+        Console.WriteLine(query == null
+            ? "mko: the registry is empty."
+            : $"mko: no packages found matching '{query}'.");
+        return;
+    }
+
+    Console.WriteLine(query == null ? "All known packages:" : $"Packages matching '{query}':");
+    Console.WriteLine();
+    foreach (var e in results)
+    {
+        var badge = e.Status == "planned" ? " [planned]" : "";
+        Console.WriteLine($"  {e.Name}{badge}");
+        Console.WriteLine($"    {e.Description}");
+    }
+    Console.WriteLine();
+    Console.WriteLine("Run 'mko info <name>' for details on any of these.");
+}
+
+static void PrintPackageInfo(RegistryEntry e)
+{
+    Console.WriteLine($"{e.Name}  ({e.Kind}, {e.Status})");
+    Console.WriteLine();
+    Console.WriteLine(e.Description);
+    Console.WriteLine();
+    Console.WriteLine($"Status: {InstallStatusLine(e)}");
+    if (e.Usage != null) Console.WriteLine($"Usage:  {e.Usage}");
+    if (e.Source != null) Console.WriteLine($"Source: {e.Source}");
+    if (e.Docs != null) Console.WriteLine($"Docs:   {e.Docs}");
+    if (e.Note != null) Console.WriteLine($"Note:   {e.Note}");
+}
+
 static void PrintHelp()
 {
     Console.WriteLine("""
@@ -400,6 +496,9 @@ static void PrintHelp()
       mko get <pkg> [github:U/R]    Install a package
       mko list                      List installed packages
       mko cache clear [pkg]         Remove cached package(s)
+      mko search [query] [--term]   Browse/search known packages (opens a GUI window;
+                                     --term prints plain text instead)
+      mko info <pkg> [--term]       Show details on one package
       mko version                   Show version
       mko help                      Show this help
 
@@ -433,11 +532,14 @@ static void PrintHelp()
       Util:   type  to_num  to_str  assert
 
     Packages:
-      using MakoUI;                          desktop UI (Dear ImGui)
+      using MakoUI;                          desktop UI (Dear ImGui) — also usable
+                                              standalone as "MakoGUI" (no game loop)
       using Mako2D; / using Mako3D;          2D / 3D game rendering
       using Inputs; / using Audio;           input, sound + synth
       using Net;                             HTTP requests + JSON
       using mylib from "github:User/Repo";   fetch from GitHub
+
+      Not sure what's available? Run 'mko search' to browse.
 
     Example:
       mko hello.mko

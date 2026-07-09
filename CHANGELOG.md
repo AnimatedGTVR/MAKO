@@ -6,6 +6,25 @@ All notable changes to MAKO are recorded here.
 
 ## [Unreleased]
 
+### Added
+
+**Package discovery: `mko search` / `mko info`.** MAKO could already install
+and use packages (`mko get`, `using X from "github:...";`) but had no way to
+ask "what's out there?" first — you needed the exact name already. Both new
+commands read a small embedded registry (`registry.json`) and, by default,
+open a real MakoUI-based graphical browser (search box, results list,
+description panel with the exact `using` line to copy); pass `--term` for
+plain text instead, and the GUI falls back to text automatically if a window
+can't be opened. `using UnknownPackage;` errors now suggest `mko search`/
+`mko info` when the name doesn't match anything installed or registered.
+
+**MakoGUI**, discoverable via the new registry, is the standalone-desktop-app
+identity of `MakoUI.init(...)` — same package as MakoUI (which also covers the
+in-game-overlay `MakoUI.attach()` case), just named for people who want to
+build a plain GUI app with no game loop. **MakoVR** is also listed, explicitly
+marked `planned` — there's no VR implementation, just an honest "this is
+coming" entry to show the registry format supports that.
+
 ### Fixed
 
 **`MakoUI.DragRange` was dead code.** Implemented in C# but never wired into
