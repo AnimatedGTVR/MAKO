@@ -641,7 +641,7 @@ class Interpreter
         // MakoUI — widgets
         "MakoUI.text", "MakoUI.text_colored", "MakoUI.button", "MakoUI.small_button",
         "MakoUI.checkbox", "MakoUI.slider", "MakoUI.slider_int",
-        "MakoUI.drag", "MakoUI.drag_int",
+        "MakoUI.drag", "MakoUI.drag_int", "MakoUI.drag_range",
         "MakoUI.input_text", "MakoUI.input_number", "MakoUI.input_text_multi",
         "MakoUI.combo",
         "MakoUI.collapsing", "MakoUI.progress",
@@ -1353,6 +1353,12 @@ class Interpreter
                 EnsureUI(name);
                 result = _ui!.DragInt(AsStr(name, args[0]), AsNum(name, args[1]),
                                       args.Count > 2 ? AsNum(name, args[2]) : 1.0);
+                return true;
+            case "MakoUI.drag_range":
+                if (args.Count < 3 || args.Count > 4) throw new MakoError("MakoUI.drag_range() expects (label, lo, hi, speed?)");
+                EnsureUI(name);
+                result = _ui!.DragRange(AsStr(name, args[0]), AsNum(name, args[1]), AsNum(name, args[2]),
+                                        args.Count > 3 ? AsNum(name, args[3]) : 1.0);
                 return true;
 
             // ── Tooltips ─────────────────────────────────────────────────────

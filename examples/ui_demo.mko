@@ -11,6 +11,7 @@ main() {
     selected = 0;
     fruits = ["Apple", "Banana", "Cherry", "Dragonfruit"];
     show_modal = false;
+    spawn_range = [10, 90];
     while MakoUI.running() {
         MakoUI.begin();
         # ── Main menu bar ──────────────────────────────────────────────────
@@ -61,14 +62,16 @@ main() {
         count = MakoUI.drag_int("Drag count", count, speed);
         MakoUI.end_window();
         # ── Input window ───────────────────────────────────────────────────
-        MakoUI.set_window_size(320, 180);
+        MakoUI.set_window_size(320, 230);
         MakoUI.set_window_pos(20, 260);
         MakoUI.begin_window("Inputs");
         name = MakoUI.input_text("Name", name);
         selected = MakoUI.combo("Fruit", selected, fruits);
         speed = MakoUI.drag("Drag speed", speed, 0.05);
+        spawn_range = MakoUI.drag_range("Spawn range", spawn_range[0], spawn_range[1]);
         MakoUI.spacing();
         MakoUI.text("Hello, {name}! You picked: {fruits[selected]}");
+        MakoUI.text("Spawn range: {spawn_range[0]} - {spawn_range[1]}");
         MakoUI.end_window();
         # ── Table window ───────────────────────────────────────────────────
         MakoUI.set_window_size(360, 220);

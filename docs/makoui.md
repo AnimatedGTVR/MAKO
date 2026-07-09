@@ -173,6 +173,7 @@ choice  = MakoUI.combo("Fruit", choice, ["Apple", "Banana", "Cherry"]);
 | `checkbox(label, value)` | Returns new bool |
 | `slider(label, value, min, max)` / `slider_int(...)` | Returns new value |
 | `drag(label, value, speed)` / `drag_int(...)` | Drag number fields |
+| `drag_range(label, lo, hi, speed=1.0)` | Two-handle drag widget for a `[lo, hi]` range — returns updated `[lo, hi]` |
 | `input_text(label, value)` / `input_text_multi(label, value, lines)` | Text fields |
 | `input_number(label, value)` | Numeric field |
 | `combo(label, index, items_list)` | Dropdown, returns new index |
@@ -187,6 +188,13 @@ convention in MAKO, so its result plugs straight into `Mako3D.color(...)` or
 ```mako
 col = MakoUI.color_picker("Object color##picker", col[0], col[1], col[2]);
 Mako3D.set_object_color(selected, Mako3D.color(col[0], col[1], col[2]));
+```
+
+`drag_range` works the same way — assign both handles back from the returned list:
+
+```mako
+range = [10, 90];
+range = MakoUI.drag_range("Spawn range", range[0], range[1]);
 ```
 
 ## Layout

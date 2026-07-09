@@ -289,11 +289,14 @@ sealed class MakoUI : IDisposable
         return iv;
     }
 
-    public double DragRange(string label, double lo, double hi, double speed = 1.0)
+    /// A two-handle drag widget for picking a [lo, hi] range. Returns the
+    /// updated bounds as a list, matching ColorPicker's [r, g, b] convention,
+    /// so a script does `[lo, hi] = MakoUI.drag_range(...)`.
+    public List<object?> DragRange(string label, double lo, double hi, double speed = 1.0)
     {
         float flo = (float)lo, fhi = (float)hi;
         ImGui.DragFloatRange2(label, ref flo, ref fhi, (float)speed);
-        return flo; // returns updated lo; caller reads hi via separate call or ignores
+        return new List<object?> { (object?)(double)flo, (double)fhi };
     }
 
     // ── Tooltips ──────────────────────────────────────────────────────────────
