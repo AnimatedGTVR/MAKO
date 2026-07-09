@@ -165,7 +165,7 @@ main() { print MathLib.square(8); }
 ```
 
 **Native packages** — built into the interpreter, activated by `using`:
-`MakoUI`, `Mako2D`, `Mako3D`, `Inputs`, `Audio`.
+`MakoUI`, `Mako2D`, `Mako3D`, `Inputs`, `Audio`, `Net`.
 
 **GitHub packages** — cloned and cached on first use:
 

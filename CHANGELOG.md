@@ -8,6 +8,27 @@ All notable changes to MAKO are recorded here.
 
 ### Fixed
 
+**`MakoUI.DragRange` was dead code.** Implemented in C# but never wired into
+the interpreter's dispatch table, so it was uncallable from any `.mko` script
+despite being a real, working widget. Wired up as `MakoUI.drag_range(label,
+lo, hi, speed=1.0)`, returning `[lo, hi]` like `color_picker` does, so a
+script does `[lo, hi] = MakoUI.drag_range(...)`.
+
+**Documentation audit.** Cross-checked every native package's implementation
+against its docs file and found real gaps:
+
+- `Mako3D.sky(color)` — a `clear()`-equivalent alias for a 3D scene's
+  backdrop — existed in the interpreter with zero mention in `mako3d.md`.
+- `sort_by(xs)`'s one-argument form (sorts by natural order, no key function
+  needed) wasn't documented — only the two-argument `sort_by(xs, fn)` form was.
+- `docs/language.md`'s native-packages list omitted `Net`.
+- `docs/language-reference.md` was badly stale (predated dicts, lambdas,
+  try/catch, native/GitHub packages, and most of the standard library —
+  everything it said was still true, it just described maybe half the
+  language). Rewritten to cover all of the above, plus string indexing,
+  `slice`, and the full built-in function surface (higher-order, dict,
+  geometry/collision, pathfinding, file I/O, system, JSON).
+
 **Segfault on exit after closing a raylib window.** raylib's `CloseWindow`
 tears down GL/GLFW unconditionally, so closing twice crashed the process
 (`GLFW: Error: 65537` + SIGSEGV after "Window closed successfully"). This hit

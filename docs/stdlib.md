@@ -90,7 +90,7 @@ truthy = wall.
 | `map(xs, fn)` | Transform each element |
 | `filter(xs, fn)` | Keep elements where fn is truthy |
 | `reduce(xs, fn, init)` | Fold to a single value |
-| `sort_by(xs, fn)` | Sort by fn's key |
+| `sort_by(xs, fn?)` | Sort by fn's key — omit `fn` to sort numbers/strings by natural order |
 | `each(xs, fn)` | Call fn per element |
 | `any(xs, fn)` `all(xs, fn)` | Boolean tests |
 

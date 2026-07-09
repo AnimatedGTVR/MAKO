@@ -30,6 +30,15 @@ Lifecycle (`init fps running begin end close delta get_fps width height
 title draw_fps`) and colors (`color`, `fade`, 21 named constants) work
 exactly like [Mako2D](mako2d.md).
 
+`clear(color)` fills the frame before drawing, same as Mako2D. `sky(color)`
+is an alias for the same call, named for when you're filling a 3D scene's
+backdrop rather than a 2D canvas — the two are interchangeable:
+
+```mako
+Mako3D.begin();
+Mako3D.sky(Mako3D.color(135, 206, 235));  # same effect as Mako3D.clear(...)
+```
+
 ## Camera3D
 
 | Function | Description |
