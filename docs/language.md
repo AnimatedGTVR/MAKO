@@ -75,6 +75,48 @@ if has(d, "hp") { ... }      # key check
 for key in d { print "{key} = {d[key]}"; }
 ```
 
+## Structs
+
+A named shape for a dict, plus functions that take it as their first
+argument (`self`) and can be called with `instance.method(...)` syntax.
+
+```mako
+struct Point {
+    x, y
+}
+
+fn Point.dist(self, other) {
+    return dist(self.x, self.y, other.x, other.y);
+}
+
+main() {
+    p1 = Point { x: 0, y: 0 };
+    p2 = Point { x: 3, y: 4 };
+
+    print p1.dist(p2);   # 5
+    print p1.x;          # 0
+
+    p1.x = 10;            # fields are read/write, like dict keys
+    print type(p1);       # "Point", not "dict"
+}
+```
+
+`struct Name { field, field, ... }` declares the shape — every field is
+required at construction time (`Name { field: value, ... }`, in any order).
+Methods are ordinary top-level functions named `Type.method`, declared
+outside `main()` like any other `fn`; the first parameter is always the
+instance (conventionally named `self`), and it's filled in automatically —
+`p1.dist(p2)` calls `Point.dist` with `p1` as `self` and `p2` as `other`.
+
+A struct instance *is* a dict underneath — `keys()`, `len()`, `for key in
+instance`, `json_encode()`, and dict indexing (`p1["x"]`) all still work on
+it exactly like a plain `{...}` dict. `type()` is the one thing that tells
+them apart, returning the struct's name instead of `"dict"`.
+
+There's no inheritance, no private fields, and no constructors beyond the
+`Name { field: value }` literal — keep instance setup in the literal itself
+or a plain function that returns one.
+
 ## Control flow
 
 ```mako
@@ -147,7 +189,30 @@ try {
 try { risky(); } catch { }    # catch variable is optional
 ```
 
-`assert(cond, "message")` throws when the condition is falsy.
+`throw expr;` raises a catchable error — `expr` is stringified as the
+message (so `throw "bad input: {n}";` works via normal string
+interpolation). An uncaught `throw` stops the program with a clean error
+message pointing at the `throw` line, same as any other MAKO error.
+
+```mako
+fn parse_age(text) {
+    n = to_num(text);
+    if n < 0 {
+        throw "age can't be negative: {n}";
+    }
+    return n;
+}
+
+try {
+    parse_age("-5");
+} catch err {
+    print "invalid: {err}";   # "invalid: age can't be negative: -5"
+}
+```
+
+`assert(cond, "message")` throws when the condition is falsy — equivalent
+to `if not cond { throw "message"; }`, useful as a one-liner precondition
+check.
 
 ## Modules & packages
 

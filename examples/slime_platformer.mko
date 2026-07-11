@@ -1,0 +1,136 @@
+using Mako2D;
+using Physics2D;
+using Inputs;
+using MakoUI;
+
+fn draw_slime(info) {
+    points = info["points"];
+    for i in range(len(points)) {
+        next = (i + 1) % len(points);
+        Mako2D.triangle(info["x"], info["y"], points[next][0], points[next][1], points[i][0], points[i][1], Mako2D.fade(Mako2D.LIME, 0.8));
+        Mako2D.circle(points[i][0], points[i][1], info["particle_radius"], Mako2D.LIME);
+    }
+    for i in range(len(points)) {
+        next = (i + 1) % len(points);
+        Mako2D.line(points[i][0], points[i][1], points[next][0], points[next][1], Mako2D.GREEN);
+    }
+    # Googly eyes follow velocity independently from the squishy body.
+    eye_radius = clamp(info["radius"] * 0.2, 8, 14);
+    eye_gap = info["width"] * 0.15;
+    eye_y = info["y"] - info["height"] * 0.12;
+    pupil_x = clamp(info["vx"] / 75, -eye_radius * 0.38, eye_radius * 0.38);
+    pupil_y = clamp(info["vy"] / 95, -eye_radius * 0.38, eye_radius * 0.38);
+    Mako2D.circle(info["x"] - eye_gap, eye_y, eye_radius, Mako2D.WHITE);
+    Mako2D.circle(info["x"] + eye_gap, eye_y, eye_radius, Mako2D.WHITE);
+    Mako2D.circle_lines(info["x"] - eye_gap, eye_y, eye_radius, Mako2D.BLACK);
+    Mako2D.circle_lines(info["x"] + eye_gap, eye_y, eye_radius, Mako2D.BLACK);
+    Mako2D.circle(info["x"] - eye_gap + pupil_x, eye_y + pupil_y, eye_radius * 0.44, Mako2D.BLACK);
+    Mako2D.circle(info["x"] + eye_gap + pupil_x, eye_y + pupil_y, eye_radius * 0.44, Mako2D.BLACK);
+}
+
+fn draw_platform(world, body, color) {
+    info = Physics2D.body_info(world, body);
+    Mako2D.rect_rot(info["x"], info["y"], info["width"], info["height"], info["rotation"], color);
+    Mako2D.rect_rot_lines(info["x"], info["y"], info["width"], info["height"], info["rotation"], Mako2D.RAYWHITE);
+}
+
+main() {
+    Mako2D.init(1000, 650, "MAKO — Googly Slime Run");
+    Mako2D.fps(60);
+    MakoUI.attach();
+    MakoUI.theme_dark();
+    world = Physics2D.world(0, 1050);
+    platforms = [];
+    # Broken ground makes forgiving pits; the raised platforms form a route.
+    push(platforms, Physics2D.box(world, "static", 135, 625, 270, 40, 1, 0, 0.9));
+    push(platforms, Physics2D.box(world, "static", 415, 625, 190, 40, 1, 0, 0.9));
+    push(platforms, Physics2D.box(world, "static", 665, 625, 220, 40, 1, 0, 0.9));
+    push(platforms, Physics2D.box(world, "static", 915, 625, 170, 40, 1, 0, 0.9));
+    push(platforms, Physics2D.box(world, "static", 300, 515, 150, 20, 1, 0, 0.9, -5));
+    push(platforms, Physics2D.box(world, "static", 500, 420, 145, 20, 1, 0, 0.9, 4));
+    push(platforms, Physics2D.box(world, "static", 690, 325, 145, 20, 1, 0, 0.9, -4));
+    push(platforms, Physics2D.box(world, "static", 870, 230, 170, 20, 1, 0, 0.9));
+    spawn_x = 95;
+    spawn_y = 535;
+    slime = Physics2D.slime(world, spawn_x, spawn_y, 42, {
+            "squish": 0.55,
+            "friction": 0.95,
+            "speed": 270,
+            "jump_speed": 500,
+            "air_control": 0.42
+        });
+    coins = [{"x": 300, "y": 455, "got": false}, {"x": 500, "y": 360, "got": false}, {"x": 690, "y": 265, "got": false}];
+    score = 0;
+    deaths = 0;
+    won = false;
+    while Mako2D.running() {
+        move = 0;
+        if !MakoUI.wants_keyboard() and !won {
+            if Inputs.key_down("A") or Inputs.key_down("LEFT") {
+                move = move - 1;
+            }
+            if Inputs.key_down("D") or Inputs.key_down("RIGHT") {
+                move = move + 1;
+            }
+            if Inputs.key_pressed("SPACE") {
+                Physics2D.slime_jump(world, slime);
+            }
+        }
+        Physics2D.slime_move(world, slime, move);
+        Physics2D.slime_hold_jump(world, slime, Inputs.key_down("SPACE") and !MakoUI.wants_keyboard() and !won);
+        Physics2D.step(world, Mako2D.delta());
+        slime_info = Physics2D.slime_info(world, slime);
+        for coin in coins {
+            if !coin["got"] and circles_overlap(slime_info["x"], slime_info["y"], slime_info["radius"], coin["x"], coin["y"], 14) {
+                coin["got"] = true;
+                score = score + 1;
+            }
+        }
+        if slime_info["y"] > 720 or slime_info["x"] < -80 or slime_info["x"] > 1080 {
+            deaths = deaths + 1;
+            Physics2D.slime_reset(world, slime, spawn_x, spawn_y);
+        }
+        if slime_info["x"] > 840 and slime_info["y"] < 215 and score == len(coins) {
+            won = true;
+        }
+        if Inputs.key_pressed("R") {
+            Physics2D.slime_reset(world, slime, spawn_x, spawn_y);
+            won = false;
+        }
+        Mako2D.begin();
+        Mako2D.clear(Mako2D.color(13, 20, 32));
+        # Background landmarks and the goal beacon.
+        Mako2D.circle(895, 145, 32, Mako2D.fade(Mako2D.GOLD, 0.25));
+        Mako2D.circle_lines(895, 145, 32, Mako2D.GOLD);
+        Mako2D.text("GOAL", 868, 138, 18, Mako2D.WHITE);
+        for platform in platforms {
+            draw_platform(world, platform, Mako2D.color(238, 181, 24));
+        }
+        for coin in coins {
+            if !coin["got"] {
+                Mako2D.circle(coin["x"], coin["y"], 12, Mako2D.GOLD);
+                Mako2D.circle_lines(coin["x"], coin["y"], 12, Mako2D.WHITE);
+            }
+        }
+        draw_slime(slime_info);
+        if won {
+            Mako2D.text("GOO-D JOB!", 390, 90, 42, Mako2D.LIME);
+            Mako2D.text("Press R to run again", 405, 140, 22, Mako2D.WHITE);
+        }
+        MakoUI.begin();
+        MakoUI.set_window_pos(14, 14);
+        MakoUI.set_window_size(250, 130);
+        MakoUI.begin_window("Slime Run");
+        MakoUI.text("Goo: " + score + " / " + len(coins));
+        MakoUI.text("Falls: " + deaths);
+        MakoUI.text("A/D move   SPACE jump");
+        MakoUI.text("Hold SPACE for height");
+        if MakoUI.button("Reset (R)") {
+            Physics2D.slime_reset(world, slime, spawn_x, spawn_y);
+            won = false;
+        }
+        MakoUI.end_window();
+        MakoUI.end();
+        Mako2D.end();
+    }
+}

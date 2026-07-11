@@ -1,0 +1,266 @@
+using Mako3D;
+using Physics3D;
+using Inputs;
+using MakoUI;
+
+main() {
+    Mako3D.init(1000, 700, "MAKO Physics3D");
+    Mako3D.fps(60);
+    MakoUI.attach();
+    MakoUI.theme_dark();
+    # Pulled back and slightly elevated so the whole scene fits in frame at
+    # once: the tower reaches y=12, the ramp sits out at x=10-24. A camera
+    # that's too close or too low crops the top of the tower or squashes
+    # the ramp into the corner. Right-drag still orbits freely from here.
+    cam = Mako3D.camera(4, 16, 40, 2, 5, 0);
+    skybox = Mako3D.create_skybox("../Images/Skybox.png");
+    orbit_angle = 100;
+    orbit_dist = 42;
+    orbit_height = 16;
+    world = Physics3D.world(0, -9.81, 0);
+    floor = Physics3D.floor(world);
+    Physics3D.material(world, floor, 0.2, 0.7);
+    bodies = [];
+    colors = [Mako3D.RED, Mako3D.ORANGE, Mako3D.GOLD, Mako3D.LIME, Mako3D.SKYBLUE, Mako3D.PURPLE, Mako3D.PINK];
+    # A box tower to exercise box-box stacking, settling, and rotation —
+    # slight offsets so it topples/tumbles a bit as it lands, instead of a
+    # perfectly straight (and visually static) column.
+    for i in range(6) {
+        ox = (i % 2 * 2 - 1) * 0.35;
+        b = Physics3D.box(world, ox, 1.05 + i * 2.1, 0, 2, 2, 2);
+        Physics3D.material(world, b, 0.1, 0.6);
+        push(bodies, {
+                "id": b,
+                "shape": "box",
+                "size": [2, 2, 2],
+                "color": colors[i % len(colors)],
+                "temp": false
+            });
+    }
+    # A loose scatter of rolling spheres — spheres show rotation the most
+    # clearly, since rolling is pure rotation with no translation-only motion
+    # to hide it.
+    for i in range(5) {
+        sx = -6 + i * 2.5;
+        sz = -4 + i % 2 * 3;
+        s = Physics3D.sphere(world, sx, 6 + i, sz, 0.6);
+        Physics3D.material(world, s, 0.6, 0.3);
+        push(bodies, {
+                "id": s,
+                "shape": "sphere",
+                "radius": 0.6,
+                "color": Mako3D.SKYBLUE,
+                "temp": false
+            });
+    }
+    # A capsule dropped on its side so it visibly rolls and settles — capsule
+    # rotation exercises DrawCapsuleRotQ, and capsule-plane/capsule-box
+    # collision, not just spheres/boxes.
+    cap = Physics3D.capsule(world, 5, 4, 4, 0.5, 2.4);
+    Physics3D.material(world, cap, 0.1, 0.5);
+    Physics3D.set_rotation(world, cap, 0, 0, 90);
+    push(bodies, {
+            "id": cap,
+            "shape": "capsule",
+            "radius": 0.5,
+            "height": 2.4,
+            "color": Mako3D.PINK,
+            "temp": false
+        });
+    # A friction ramp: two identical boxes released together near the top of
+    # a long tilted static box, one with near-zero friction and one with
+    # high friction — they visibly slide at very different rates, showing
+    # friction is real and not just a hidden number. The ramp is long enough
+    # that the gap between them has room to grow before either reaches the
+    # bottom edge.
+    ramp = Physics3D.static_box(world, 9, 2, -8, 8, 0.4, 3);
+    Physics3D.set_rotation(world, ramp, 0, 0, 18);
+    push(bodies, {
+            "id": ramp,
+            "shape": "box",
+            "size": [8, 0.4, 3],
+            "color": Mako3D.DARKGRAY,
+            "temp": false
+        });
+    slick = Physics3D.box(world, 12, 4, -8.7, 0.8, 0.8, 0.8);
+    Physics3D.material(world, slick, 0.05, 0.02);
+    push(bodies, {
+            "id": slick,
+            "shape": "box",
+            "size": [0.8, 0.8, 0.8],
+            "color": Mako3D.SKYBLUE,
+            "temp": false
+        });
+    grippy = Physics3D.box(world, 12, 4, -7.3, 0.8, 0.8, 0.8);
+    Physics3D.material(world, grippy, 0.05, 1.2);
+    push(bodies, {
+            "id": grippy,
+            "shape": "box",
+            "size": [0.8, 0.8, 0.8],
+            "color": Mako3D.LIME,
+            "temp": false
+        });
+    # A kinematic platform uses a readable moving_box call. It follows the
+    # velocity we give it, ignores gravity, and still carries bodies on top.
+    mover = Physics3D.moving_box(world, -8, 2, 6, 5, 0.5, 4);
+    Physics3D.set_velocity(world, mover, 2, 0, 0);
+    push(bodies, {
+            "id": mover,
+            "shape": "box",
+            "size": [5, 0.5, 4],
+            "color": Mako3D.PURPLE,
+            "temp": false
+        });
+    # A real 3D spring hangs a ball from a fixed anchor. The short call captures
+    # the current length; set_spring then makes it slightly shorter and bouncy.
+    spring_anchor = Physics3D.static_sphere(world, -5, 9, 6, 0.3);
+    spring_ball = Physics3D.sphere(world, -5, 4, 6, 0.65);
+    spring_joint = Physics3D.spring(world, spring_anchor, spring_ball);
+    Physics3D.set_spring(world, spring_joint, 3.5, 45, 6);
+    push(bodies, {
+            "id": spring_anchor,
+            "shape": "sphere",
+            "radius": 0.3,
+            "color": Mako3D.RAYWHITE,
+            "temp": false
+        });
+    push(bodies, {
+            "id": spring_ball,
+            "shape": "sphere",
+            "radius": 0.65,
+            "color": Mako3D.ORANGE,
+            "temp": false
+        });
+    # A trigger is collision-shaped but not solid. Projectiles pass through it
+    # while is_triggered reports the overlap for game logic.
+    sensor = Physics3D.static_box(world, 0, 2, 8, 4, 4, 4);
+    Physics3D.trigger(world, sensor);
+    Physics3D.layer(world, sensor, "sensor");
+    sensor_was_active = false;
+    # How far below the floor (y = 0) something can fall before it's
+    # despawned. Only launched projectiles that miss everything and sail
+    # off the edge of the world reach this — it exists purely so a long
+    # play session doesn't quietly pile up bodies that fell out of the
+    # scene forever, still costing CPU (physics stepping) and GPU
+    # (nothing to draw, but the loop below would still try) for nothing.
+    despawn_depth = -10;
+    projectile_lifetime = 8;
+    command_log = ["Physics3D ready", "CLICK: aim with mouse, launch a projectile", "RIGHT-DRAG: orbit camera"];
+    while Mako3D.running() {
+        dt = Mako3D.delta();
+        if Inputs.mouse_pressed("left") {
+            # Aim with the mouse: cast a ray from the camera through the
+            # cursor's screen position, and launch straight down that ray —
+            # point at something in the scene and click to hit it.
+            aim_speed = 26;
+            ray = Mako3D.mouse_ray(cam);
+            ball = Physics3D.sphere(world, ray[0], ray[1], ray[2], 0.5);
+            Physics3D.material(world, ball, 0.5, 0.4);
+            Physics3D.apply_impulse(world, ball, ray[3] * aim_speed, ray[4] * aim_speed, ray[5] * aim_speed);
+            push(bodies, {
+                    "id": ball,
+                    "shape": "sphere",
+                    "radius": 0.5,
+                    "color": Mako3D.GOLD,
+                    "temp": true,
+                    "age": 0
+                });
+            push(command_log, "Launched projectile #" + ball);
+        }
+        if Inputs.mouse_down("right") {
+            orbit_angle = orbit_angle + Mako3D.mouse_delta_x() * 0.3;
+            orbit_height = clamp(orbit_height - Mako3D.mouse_delta_y() * 0.1, 2, 25);
+        }
+        orbit_dist = clamp(orbit_dist - Mako3D.mouse_wheel() * 1.5, 6, 40);
+        Mako3D.orbit_camera(cam, orbit_angle, orbit_dist, orbit_height);
+        Physics3D.step(world, dt);
+        sensor_active = Physics3D.is_triggered(world, sensor);
+        if sensor_active and !sensor_was_active {
+            push(command_log, "Trigger zone entered");
+        }
+        sensor_was_active = sensor_active;
+        # Reverse the moving platform at each end of its route.
+        mover_pos = Physics3D.position(world, mover);
+        mover_speed = Physics3D.velocity(world, mover);
+        if mover_pos[0] > -2 and mover_speed[0] > 0 {
+            Physics3D.set_velocity(world, mover, -2, 0, 0);
+        } else if mover_pos[0] < -10 and mover_speed[0] < 0 {
+            Physics3D.set_velocity(world, mover, 2, 0, 0);
+        }
+        # Despawn launched balls that fell out of the world (missed
+        # everything and dropped past the floor), and any that are just
+        # done — keeps the body count from growing every click forever.
+        alive = [];
+        for i in range(len(bodies)) {
+            body = bodies[i];
+            info = Physics3D.body_info(world, body["id"]);
+            if info == none {
+                continue;
+            }
+            expired = false;
+            if body["temp"] {
+                body["age"] = body["age"] + dt;
+                expired = body["age"] >= projectile_lifetime;
+            }
+            if body["temp"] and (info["y"] < despawn_depth or expired) {
+                Physics3D.remove_body(world, body["id"]);
+                push(command_log, "Projectile #" + body["id"] + " despawned");
+                continue;
+            }
+            push(alive, body);
+        }
+        bodies = alive;
+        if len(command_log) > 8 {
+            command_log = slice(command_log, len(command_log) - 8, len(command_log));
+        }
+        Mako3D.begin();
+        Mako3D.sky(Mako3D.color(18, 22, 32));
+        Mako3D.begin_3d(cam);
+        Mako3D.draw_skybox(skybox);
+        Mako3D.grid(24, 1);
+        Mako3D.plane(0, 0, 0, 40, 40, Mako3D.color(40, 44, 52));
+        spring_a = Physics3D.position(world, spring_anchor);
+        spring_b = Physics3D.position(world, spring_ball);
+        Mako3D.line3d(spring_a[0], spring_a[1], spring_a[2], spring_b[0], spring_b[1], spring_b[2], Mako3D.GOLD);
+        sensor_color = Mako3D.PINK;
+        if sensor_active {
+            sensor_color = Mako3D.LIME;
+        }
+        Mako3D.wire_cube(0, 2, 8, 4, 4, 4, sensor_color);
+        for i in range(len(bodies)) {
+            body = bodies[i];
+            info = Physics3D.body_info(world, body["id"]);
+            if info == none {
+                continue;
+            }
+            # cube_rot_q / sphere_rot_q draw straight from the physics
+            # quaternion (qx/qy/qz/qw) instead of pitch/yaw/roll — the Euler
+            # angle version can visibly snap when a tumbling object's angles
+            # cross their wraparound point; the quaternion version can't.
+            if body["shape"] == "box" {
+                size = body["size"];
+                Mako3D.cube_rot_q(info["x"], info["y"], info["z"], size[0], size[1], size[2], info["qx"], info["qy"], info["qz"], info["qw"], body["color"]);
+            } else if body["shape"] == "capsule" {
+                Mako3D.capsule(info["x"], info["y"], info["z"], body["radius"], body["height"], info["qx"], info["qy"], info["qz"], info["qw"], body["color"]);
+            } else {
+                Mako3D.sphere_rot_q(info["x"], info["y"], info["z"], body["radius"], info["qx"], info["qy"], info["qz"], info["qw"], body["color"]);
+            }
+        }
+        Mako3D.end_3d();
+        Mako3D.text("Stable piles, spring joint, trigger zone, moving platform, and projectiles", 20, 20, 20, Mako3D.RAYWHITE);
+        Mako3D.text("LEFT CLICK: aim + launch with mouse  ·  RIGHT-DRAG: orbit  ·  WHEEL: zoom", 20, 44, 18, Mako3D.LIGHTGRAY);
+        Mako3D.text("Ramp (right side): blue box has low friction, green has high friction", 20, 66, 16, Mako3D.LIGHTGRAY);
+        for i in range(len(command_log)) {
+            Mako3D.text(command_log[i], 20, 96 + i * 22, 16, Mako3D.GRAY);
+        }
+        MakoUI.begin();
+        MakoUI.set_window_pos(1000 - 240, 14);
+        MakoUI.set_window_size(226, 90);
+        MakoUI.begin_window("Performance");
+        MakoUI.fps_counter();
+        MakoUI.end_window();
+        MakoUI.end();
+        Mako3D.end();
+    }
+    Mako3D.close();
+}

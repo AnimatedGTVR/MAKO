@@ -39,6 +39,14 @@
     ]
   },
   {
+    "name": "Physics2D",
+    "kind": "native",
+    "status": "available",
+    "description": "One-call controllable slimes plus stable 2D rigid bodies, oriented boxes, adaptive substeps, sleeping, damped springs, friction, and contacts.",
+    "usage": "using Physics2D;",
+    "docs": "docs/physics2d.md"
+  },
+  {
     "name": "Inputs",
     "kind": "native",
     "status": "available",

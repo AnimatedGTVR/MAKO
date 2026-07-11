@@ -366,6 +366,7 @@ sealed class MakoUI : IDisposable
     /// doing your own 3D picking so a click on the UI doesn't also select an
     /// object underneath it.
     public bool WantsMouse()                  => ImGui.GetIO().WantCaptureMouse;
+    public bool WantsKeyboard()               => ImGui.GetIO().WantCaptureKeyboard;
 
     /// A wheel-style color picker (hue ring + saturation/value square).
     /// Takes and returns 0-255 channels, matching Mako2D/Mako3D's color
@@ -418,6 +419,19 @@ sealed class MakoUI : IDisposable
 
         ImGui.PlotLines("##fps_graph", ref ordered[0], _fpsSamples, 0, "",
             0f, 120f, new Vector2(200, 40));
+    }
+
+    /// Embeds a Mako3D off-screen preview as a real ImGui widget. ImGui owns
+    /// its layout and clipping, so the image cannot escape or cover controls.
+    public void Preview(int handle, float width, float height)
+    {
+        var texture = MakoRay3D.PreviewTextureId(handle);
+        if (texture == null)
+        {
+            ImGui.TextDisabled("Preview unavailable");
+            return;
+        }
+        ImGui.Image((nint)texture.Value, new Vector2(width, height), new Vector2(0, 1), new Vector2(1, 0));
     }
 
     // ── Style ─────────────────────────────────────────────────────────────────

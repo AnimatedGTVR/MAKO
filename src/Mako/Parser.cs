@@ -29,16 +29,36 @@ class Parser
     private readonly List<Token> _tokens;
     private int _pos;
 
+    // Struct names declared anywhere in this file, collected before body
+    // parsing so 'Ident { ... }' can be told apart from a block/dict at
+    // the point we're parsing an expression (the parser has no type
+    // inference — this set is the only way it can know 'Point' names a
+    // struct rather than being e.g. an unrelated variable holding a dict).
+    private readonly HashSet<string> _structNames = new(StringComparer.Ordinal);
+
     public Parser(List<Token> tokens) => _tokens = tokens;
+
+    /// Used by the REPL: a fresh Parser only sees the current line's tokens,
+    /// so it can't discover struct names declared on earlier lines via its
+    /// own CollectStructNames() scan. The REPL passes those in explicitly so
+    /// "Point { x: 1 }" parses as a struct literal even when "struct Point"
+    /// was typed on a previous line, in a previous Parser instance.
+    public Parser(List<Token> tokens, IEnumerable<string> knownStructNames) : this(tokens)
+    {
+        foreach (var name in knownStructNames) _structNames.Add(name);
+    }
 
     public ProgramNode Parse()
     {
+        CollectStructNames();
+
         string? scriptName = null;
         string? ns         = null;
         var packages  = new List<PackageRef>();
         var imports   = new List<string>();
         var constants = new List<(string Name, Expr Value)>();
         var fns       = new List<FnDecl>();
+        var structs   = new List<StructDecl>();
         var body      = new List<Statement>();
         Token? mainTok = null;
 
@@ -94,6 +114,8 @@ class Parser
         {
             if (Check(TokenType.Fn))
                 fns.Add(ParseFnDecl());
+            else if (Check(TokenType.Struct))
+                structs.Add(ParseStructDecl());
             else if (Check(TokenType.Main))
             {
                 if (mainTok is { } first)
@@ -117,25 +139,68 @@ class Parser
             {
                 var s = tok.Value is "func" or "function" or "def"
                     ? "fn"
-                    : Suggest.Closest(tok.Value, ["fn", "main", "use", "using", "const", "script", "namespace"]);
+                    : Suggest.Closest(tok.Value, ["fn", "struct", "main", "use", "using", "const", "script", "namespace"]);
                 if (s != null) hint = $" (did you mean '{s}'?)";
             }
             throw new MakoError(
-                $"unexpected {DescribeToken(tok)} at top level — only 'fn' declarations and 'main()' are allowed{hint}",
+                $"unexpected {DescribeToken(tok)} at top level — only 'fn'/'struct' declarations and 'main()' are allowed{hint}",
                 tok.Line, tok.Col, Math.Max(1, tok.Value.Length));
         }
 
-        return new ProgramNode(scriptName, ns, packages, imports, constants, fns, body,
+        return new ProgramNode(scriptName, ns, packages, imports, constants, fns, structs, body,
                                mainTok?.Line ?? 0);
     }
 
     // ── Declarations ──────────────────────────────────────────────────────────
+
+    /// A single forward scan for 'struct Name { ... }' declarations, run
+    /// before real parsing starts — see _structNames for why this is needed.
+    private void CollectStructNames()
+    {
+        for (int i = 0; i < _tokens.Count - 1; i++)
+            if (_tokens[i].Type == TokenType.Struct && _tokens[i + 1].Type == TokenType.Identifier)
+                _structNames.Add(_tokens[i + 1].Value);
+    }
+
+    private StructDecl ParseStructDecl()
+    {
+        var line = Current().Line;
+        Advance(); // "struct"
+        var name = Expect(TokenType.Identifier, "expected a struct name after 'struct'").Value;
+        var open = Expect(TokenType.LBrace, $"missing '{{' after struct name '{name}'");
+        var fields = new List<string>();
+        while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+        {
+            fields.Add(Expect(TokenType.Identifier, "expected a field name").Value);
+            if (Check(TokenType.Comma)) { Advance(); continue; }
+            if (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+            {
+                var prev = Previous();
+                throw new MakoError(
+                    $"missing ',' or '}}' between fields (got {DescribeToken(Current())})",
+                    prev.EndLine, prev.EndCol);
+            }
+        }
+        ExpectClosing(TokenType.RBrace, "}", open);
+        return new StructDecl(name, fields) { Line = line };
+    }
 
     private FnDecl ParseFnDecl()
     {
         var fnLine = Current().Line;
         Advance(); // "fn"
         var name = Expect(TokenType.Identifier, "expected a function name after 'fn'").Value;
+
+        // fn TypeName.method(self, ...) { }  — a struct method, stored as
+        // "TypeName.method" so it dispatches through the same _funcs table
+        // package functions already use ("Ns.func").
+        if (Check(TokenType.Dot))
+        {
+            Advance(); // .
+            var methodName = Expect(TokenType.Identifier, $"expected a method name after '{name}.'").Value;
+            name = $"{name}.{methodName}";
+        }
+
         var open = Expect(TokenType.LParen, $"missing '(' after function name '{name}'");
         var parms = new List<string>();
         while (!Check(TokenType.RParen) && !Check(TokenType.Eof))
@@ -189,6 +254,7 @@ class Parser
             TokenType.Return     => ParseReturn(),
             TokenType.Run        => ParseRun(),
             TokenType.Try        => ParseTry(),
+            TokenType.Throw      => ParseThrow(),
             TokenType.Identifier => ParseAssignOrCall(),
             TokenType.Else => throw new MakoError(
                 "found 'else' without a matching 'if'", tok.Line, tok.Col, 4),
@@ -239,11 +305,20 @@ class Parser
         {
             Advance(); // .
             var fnName = Expect(TokenType.Identifier, $"expected a function name after '{name}.'").Value;
-            Expr nsExpr = Check(TokenType.LParen)
-                ? ParseNamespacedCallTail(nameTok, fnName)
-                : new IdentExpr($"{name}.{fnName}") { Line = nameTok.Line, Col = nameTok.Col };
-            Expect(TokenType.Semicolon, "expression");
-            return new ExprStmt(nsExpr);
+
+            // p.method(args);  — namespaced call syntactically, but may
+            // resolve to a struct method call at runtime (see EvalNamespacedCall).
+            if (Check(TokenType.LParen))
+            {
+                var call = ParseNamespacedCallTail(nameTok, fnName);
+                // Further chaining after the call, e.g. p.method().field — fall
+                // through the general postfix/assignment path below.
+                return FinishPostfixStatement(call);
+            }
+
+            Expr baseExpr = new IdentExpr(name) { Line = nameTok.Line, Col = nameTok.Col };
+            Expr target = new FieldExpr(baseExpr, fnName) { Line = nameTok.Line, Col = nameTok.Col };
+            return FinishPostfixStatement(target);
         }
 
         // Bare function call: name(args);
@@ -270,14 +345,27 @@ class Parser
             return new IndexAssignStmt(name, indices, rhs);
         }
 
-        // Compound or plain assignment
+        // Optional type hint: name: TypeName = expr;   — purely syntactic,
+        // never enforced by the interpreter (see AssignStmt.TypeHint doc
+        // comment). Only a plain assignment may carry a hint, not a
+        // compound one — "count: number += 1;" reads oddly and isn't
+        // needed since the hint would already be on the variable's first
+        // (plain) assignment.
+        string? typeHint = null;
+        if (Check(TokenType.Colon))
+        {
+            Advance(); // :
+            typeHint = Expect(TokenType.Identifier, $"expected a type name after '{name}:'").Value;
+        }
+
+        // Compound or plain assignment (bare "name = expr;", no field/index)
         string? compoundOp = Current().Type switch
         {
             TokenType.Assign  => null,
-            TokenType.PlusEq  => "+",
-            TokenType.MinusEq => "-",
-            TokenType.StarEq  => "*",
-            TokenType.SlashEq => "/",
+            TokenType.PlusEq  => typeHint == null ? "+" : throw UnknownAfterName(nameTok),
+            TokenType.MinusEq => typeHint == null ? "-" : throw UnknownAfterName(nameTok),
+            TokenType.StarEq  => typeHint == null ? "*" : throw UnknownAfterName(nameTok),
+            TokenType.SlashEq => typeHint == null ? "/" : throw UnknownAfterName(nameTok),
             _ => throw UnknownAfterName(nameTok),
         };
         Advance();
@@ -287,7 +375,55 @@ class Parser
                                  compoundOp, val)
                   { Line = nameTok.Line, Col = nameTok.Col };
         Expect(TokenType.Semicolon, $"assignment to '{name}'");
-        return new AssignStmt(name, val);
+        return new AssignStmt(name, val, typeHint);
+    }
+
+    /// Continues a postfix chain (".field" / "[index]" / ".method(args)")
+    /// that started with a struct field or method-call statement, then
+    /// resolves it as either a field assignment ("...= expr;"), a bare call
+    /// statement ("p.method(args);"), or (if nothing assignable follows) a
+    /// discarded expression statement.
+    private Statement FinishPostfixStatement(Expr expr)
+    {
+        while (true)
+        {
+            if (Check(TokenType.LBracket))
+            {
+                var openBr = Advance();
+                var idx = ParseExpr();
+                ExpectClosing(TokenType.RBracket, "]", openBr);
+                expr = new IndexExpr(expr, idx) { Line = openBr.Line, Col = openBr.Col };
+                continue;
+            }
+            if (Check(TokenType.Dot))
+            {
+                var dotTok = Advance();
+                var field = Expect(TokenType.Identifier, "expected a field or method name after '.'").Value;
+                if (Check(TokenType.LParen))
+                {
+                    var open = Advance();
+                    var args = ParseArgList(open);
+                    expr = new MethodCallExpr(expr, field, args) { Line = dotTok.Line, Col = dotTok.Col };
+                }
+                else
+                {
+                    expr = new FieldExpr(expr, field) { Line = dotTok.Line, Col = dotTok.Col };
+                }
+                continue;
+            }
+            break;
+        }
+
+        if (Check(TokenType.Assign) && expr is FieldExpr fieldTarget)
+        {
+            Advance(); // =
+            var rhs = ParseExpr();
+            Expect(TokenType.Semicolon, "field assignment");
+            return new FieldAssignStmt(fieldTarget.Target, fieldTarget.Field, rhs);
+        }
+
+        Expect(TokenType.Semicolon, "expression");
+        return new ExprStmt(expr);
     }
 
     /// Statement began with an identifier but what follows makes no sense.
@@ -384,6 +520,14 @@ class Parser
         return new RunStmt(cmd);
     }
 
+    private ThrowStmt ParseThrow()
+    {
+        Advance(); // "throw"
+        var msg = ParseExpr();
+        Expect(TokenType.Semicolon, "throw");
+        return new ThrowStmt(msg);
+    }
+
     private TryStmt ParseTry()
     {
         Advance(); // try
@@ -477,12 +621,39 @@ class Parser
     private Expr ParsePostfix()
     {
         var expr = ParsePrimary();
-        while (Check(TokenType.LBracket))
+        while (true)
         {
-            var openBr = Advance(); // [
-            var idx = ParseExpr();
-            ExpectClosing(TokenType.RBracket, "]", openBr);
-            expr = new IndexExpr(expr, idx) { Line = openBr.Line, Col = openBr.Col };
+            if (Check(TokenType.LBracket))
+            {
+                var openBr = Advance(); // [
+                var idx = ParseExpr();
+                ExpectClosing(TokenType.RBracket, "]", openBr);
+                expr = new IndexExpr(expr, idx) { Line = openBr.Line, Col = openBr.Col };
+                continue;
+            }
+            // Chained field/method access: expr.field  /  expr.method(args)
+            // Only reachable here for the *second and later* dots in a chain —
+            // ParsePrimary already consumes a leading "Ident.Ident" itself
+            // (for namespace calls/constants like Net.get or MakoRay.RED),
+            // so this only fires once that's already been handled, or after
+            // any non-identifier primary (a call result, an index, etc.).
+            if (Check(TokenType.Dot))
+            {
+                var dotTok = Advance(); // .
+                var field = Expect(TokenType.Identifier, "expected a field or method name after '.'").Value;
+                if (Check(TokenType.LParen))
+                {
+                    var open = Advance(); // (
+                    var args = ParseArgList(open);
+                    expr = new MethodCallExpr(expr, field, args) { Line = dotTok.Line, Col = dotTok.Col };
+                }
+                else
+                {
+                    expr = new FieldExpr(expr, field) { Line = dotTok.Line, Col = dotTok.Col };
+                }
+                continue;
+            }
+            break;
         }
         return expr;
     }
@@ -587,6 +758,13 @@ class Parser
         if (Check(TokenType.Identifier))
         {
             Advance();
+            // TypeName { field: value, ... }  — struct construction. Gated on
+            // a name collected by CollectStructNames(), otherwise 'Ident {'
+            // would be ambiguous with a block starting right after a bare
+            // identifier expression (which isn't valid anyway, but this keeps
+            // the grammar unambiguous rather than relying on that).
+            if (_structNames.Contains(tok.Value) && Check(TokenType.LBrace))
+                return ParseStructLitTail(tok);
             // Namespace.func(args)
             if (Check(TokenType.Dot))
             {
@@ -627,6 +805,29 @@ class Parser
         var open = Expect(TokenType.LParen, $"missing '(' after '{nsTok.Value}.{fn}'");
         var args = ParseArgList(open);
         return new NamespacedCallExpr(nsTok.Value, fn, args) { Line = nsTok.Line, Col = nsTok.Col };
+    }
+
+    private StructLitExpr ParseStructLitTail(Token typeTok)
+    {
+        var open = Advance(); // {
+        var fields = new List<(string Field, Expr Value)>();
+        while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+        {
+            var field = Expect(TokenType.Identifier, "expected a field name").Value;
+            Expect(TokenType.Colon, $"expected ':' after field name '{field}'");
+            var val = ParseExpr();
+            fields.Add((field, val));
+            if (Check(TokenType.Comma)) { Advance(); continue; }
+            if (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+            {
+                var prev = Previous();
+                throw new MakoError(
+                    $"missing ',' or '}}' between fields (got {DescribeToken(Current())})",
+                    prev.EndLine, prev.EndCol);
+            }
+        }
+        ExpectClosing(TokenType.RBrace, "}", open);
+        return new StructLitExpr(typeTok.Value, fields) { Line = typeTok.Line, Col = typeTok.Col };
     }
 
     private List<Expr> ParseArgList(Token open)

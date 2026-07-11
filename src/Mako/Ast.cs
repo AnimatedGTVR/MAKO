@@ -10,6 +10,12 @@ record FnDecl(string Name, List<string> Params, List<Statement> Body)
     public int Line { get; set; }
 }
 
+/// struct Name { field, field, ... }
+record StructDecl(string Name, List<string> Fields)
+{
+    public int Line { get; set; }
+}
+
 /// A resolved package reference from a 'using' declaration.
 /// Source is null for native packages or bare names (registry-resolved).
 record PackageRef(string Name, string? Source);   // Source = "github:User/Repo" or null
@@ -21,6 +27,7 @@ record ProgramNode(
     List<string> Imports,       // "use file.mko" — local relative file imports
     List<(string Name, Expr Value)> Constants, // top-level const declarations
     List<FnDecl> Functions,
+    List<StructDecl> Structs,   // "struct Name { fields }" declarations
     List<Statement> Body,
     int MainLine = 0            // source line of the 'main' keyword
 );
@@ -41,10 +48,15 @@ record PrintStmt(Expr Value) : Statement;
 record PrintnlStmt(Expr Value) : Statement;
 
 /// name = expr;  /  name += expr;  etc.
-record AssignStmt(string Name, Expr Value) : Statement;
+/// TypeHint is an optional, unenforced annotation — `name: string = expr;`
+/// — parsed for tooling (`mko check`) only; the interpreter never reads it.
+record AssignStmt(string Name, Expr Value, string? TypeHint = null) : Statement;
 
 /// name[idx] = expr;   /   name[i][j] = expr;   (Indices holds one entry per '[...]')
 record IndexAssignStmt(string Name, List<Expr> Indices, Expr Value) : Statement;
+
+/// target.field = expr;   — Target is evaluated, then Field is written into it (a dict).
+record FieldAssignStmt(Expr Target, string Field, Expr Value) : Statement;
 
 /// if condition { ... } else { ... }
 record IfStmt(Expr Condition, List<Statement> Then, List<Statement> Else) : Statement;
@@ -74,6 +86,9 @@ record ConstStmt(string Name, Expr Value) : Statement;
 /// only when no 'catch' clause was written at all — an empty catch body,
 /// `catch { }`, still has HasCatch = true and must suppress the error.)
 record TryStmt(List<Statement> Try, string? CatchVar, List<Statement> Catch, bool HasCatch) : Statement;
+
+/// throw expr;   — raises a catchable error; expr is stringified as the message.
+record ThrowStmt(Expr Message) : Statement;
 
 /// A bare expression used as a statement (e.g. a function call).
 record ExprStmt(Expr Value) : Statement;
@@ -114,6 +129,16 @@ record IdentExpr(string Name) : Expr;
 
 /// target[index]
 record IndexExpr(Expr Target, Expr Index) : Expr;
+
+/// target.field   — reads a key out of a dict/struct instance value.
+record FieldExpr(Expr Target, string Field) : Expr;
+
+/// target.method(arg, ...)   — a struct method call; dispatches on the
+/// instance's "__type" tag to a 'fn TypeName.method(self, ...)' declaration.
+record MethodCallExpr(Expr Target, string Method, List<Expr> Args) : Expr;
+
+/// TypeName { field: value, ... }   — constructs a struct instance.
+record StructLitExpr(string TypeName, List<(string Field, Expr Value)> Fields) : Expr;
 
 /// left op right  — arithmetic / comparison
 record BinaryExpr(Expr Left, string Op, Expr Right) : Expr;

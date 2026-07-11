@@ -1,6 +1,6 @@
 # MAKO Language Reference
 
-**Version:** 0.03  
+**Version:** 0.1.0  
 **File extension:** `.mko`
 
 ---

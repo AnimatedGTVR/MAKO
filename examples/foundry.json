@@ -1,0 +1,7 @@
+{
+  "name": "Slime Platformer",
+  "version": "0.1.0",
+  "entry": "slime_platformer.mko",
+  "output": "dist",
+  "target": "web"
+}

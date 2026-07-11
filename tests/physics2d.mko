@@ -1,0 +1,198 @@
+using Physics2D;
+
+main() {
+    # Gravity + a static floor should settle a circle on the floor's top face.
+    world = Physics2D.world(0, 100, 1 / 60);
+    floor = Physics2D.box(world, "static", 0, 100, 200, 20, 1, 0, 0.8);
+    ball = Physics2D.circle(world, "dynamic", 0, 0, 10, 2, 0, 0.5);
+    for i in range(180) {
+        Physics2D.step(world, 1 / 60);
+    }
+    info = Physics2D.body_info(world, ball);
+    assert(abs(info["y"] - 80) < 0.2, "circle rests on top of the floor");
+    assert(abs(info["vy"]) < 0.2, "resting circle has no meaningful vertical velocity");
+    assert(Physics2D.is_colliding(world, ball), "resting contact is reported");
+    assert(Physics2D.contacts(world, ball)[0] == floor, "contact includes the floor handle");
+    assert(Physics2D.is_sleeping(world, ball), "settled body sleeps instead of drifting forever");
+    Physics2D.apply_impulse(world, ball, 1, 0);
+    assert(!Physics2D.is_sleeping(world, ball), "an impulse wakes a sleeping body");
+    floor_info = Physics2D.body_info(world, floor);
+    assert(floor_info["x"] == 0 and floor_info["y"] == 100, "static body does not move");
+    # Impulses are divided by mass; a 60-unit impulse on mass 2 gives vx=30.
+    zero_g = Physics2D.world(0, 0, 1 / 60);
+    mover = Physics2D.circle(zero_g, "dynamic", 0, 0, 2, 2, 1, 0);
+    Physics2D.apply_impulse(zero_g, mover, 60, 0);
+    Physics2D.step(zero_g, 1 / 60);
+    mover_info = Physics2D.body_info(zero_g, mover);
+    assert(mover_info["vx"] > 29.9 and mover_info["vx"] < 30, "impulse respects mass and damping");
+    assert(abs(mover_info["x"] - 0.5) < 0.01, "impulse changes position on the next step");
+    # Circle-circle contact and response.
+    target = Physics2D.circle(zero_g, "static", 10, 0, 4, 1, 1, 0);
+    Physics2D.set_position(zero_g, mover, 4, 0);
+    Physics2D.set_velocity(zero_g, mover, 60, 0);
+    Physics2D.step(zero_g, 1 / 60);
+    assert(Physics2D.is_colliding(zero_g, mover), "circle-circle collision is detected");
+    assert(Physics2D.body_info(zero_g, mover)["vx"] < 0, "bounce reverses circle velocity");
+    # Box-box collision, kinematic motion, removal, and safe inspection.
+    boxes = Physics2D.world(0, 0, 1 / 60);
+    wall = Physics2D.box(boxes, "static", 20, 0, 10, 10);
+    box = Physics2D.box(boxes, "dynamic", 11, 0, 10, 10);
+    Physics2D.set_velocity(boxes, box, 60, 0);
+    Physics2D.step(boxes, 1 / 60);
+    assert(Physics2D.is_colliding(boxes, box), "box-box collision is detected");
+    assert(Physics2D.body_info(boxes, box)["x"] < 15, "box is corrected out of the wall");
+    platform = Physics2D.box(boxes, "kinematic", 0, 30, 10, 2);
+    Physics2D.set_velocity(boxes, platform, 12, 0);
+    Physics2D.step(boxes, 0.5);
+    # step() clamps a single frame to 0.25s to avoid runaway catch-up.
+    assert(abs(Physics2D.body_info(boxes, platform)["x"] - 3) < 0.01, "kinematic body follows velocity");
+    count = Physics2D.body_count(boxes);
+    Physics2D.remove_body(boxes, box);
+    assert(Physics2D.body_count(boxes) == count - 1, "remove_body updates the world");
+    assert(Physics2D.body_info(boxes, box) == none, "removed body has no info");
+    Physics2D.clear(boxes);
+    assert(Physics2D.body_count(boxes) == 0, "clear removes every body");
+    # Angular state uses degrees at the script boundary and radians internally.
+    angular = Physics2D.world(0, 0, 1 / 60);
+    spinner = Physics2D.box(angular, "dynamic", 0, 0, 4, 2, 2, 0, 0, 15);
+    assert(abs(Physics2D.body_info(angular, spinner)["rotation"] - 15) < 0.001, "box accepts an initial rotation");
+    # Inertia for this box is mass * (w^2 + h^2) / 12 = 10/3.
+    Physics2D.apply_angular_impulse(angular, spinner, 10 / 3);
+    Physics2D.step(angular, 1 / 60);
+    spin_info = Physics2D.body_info(angular, spinner);
+    assert(spin_info["angular_velocity"] > 57 and spin_info["angular_velocity"] < 57.3, "angular impulse respects inertia and damping");
+    assert(abs(spin_info["rotation"] - 15.9549) < 0.02, "angular velocity rotates the body");
+    Physics2D.set_angular_velocity(angular, spinner, 90);
+    Physics2D.lock_rotation(angular, spinner, true);
+    Physics2D.apply_torque(angular, spinner, 1000);
+    Physics2D.step(angular, 1 / 60);
+    assert(abs(Physics2D.body_info(angular, spinner)["angular_velocity"]) < 0.001, "rotation lock blocks torque and spin");
+    Physics2D.lock_rotation(angular, spinner, false);
+    Physics2D.apply_impulse_at(angular, spinner, 10, 0, 0, 1);
+    assert(Physics2D.body_info(angular, spinner)["angular_velocity"] < 0, "off-center impulse creates rotation");
+    # SAT distinguishes a rotated thin box from its much larger AABB.
+    sat = Physics2D.world(0, 0, 1 / 60);
+    ramp = Physics2D.box(sat, "static", 0, 0, 10, 2, 1, 0, 0.4, 45);
+    probe = Physics2D.box(sat, "dynamic", 0, 4, 2, 2);
+    Physics2D.step(sat, 1 / 60);
+    assert(!Physics2D.is_colliding(sat, probe), "SAT rejects overlap that exists only in the enclosing AABB");
+    Physics2D.set_position(sat, probe, 2, 2);
+    Physics2D.step(sat, 1 / 60);
+    assert(Physics2D.is_colliding(sat, probe), "oriented boxes collide on their rotated faces");
+    # A small crooked tower should remain bounded after settling under gravity.
+    tower = Physics2D.world(0, 100, 1 / 60);
+    tower_floor = Physics2D.box(tower, "static", 0, 50, 1000, 10, 1, 0, 0.8);
+    pieces = [];
+    for i in range(5) {
+        push(pieces, Physics2D.box(tower, "dynamic", 0, 40 - i * 7, 12, 6, 1, 0, 0.8, i * 3 - 6));
+    }
+    for i in range(360) {
+        Physics2D.step(tower, 1 / 60);
+    }
+    for piece in pieces {
+        settled = Physics2D.body_info(tower, piece);
+        assert(abs(settled["x"]) < 100 and abs(settled["y"]) < 100, "rotated stack remains numerically bounded");
+        assert(abs(settled["angular_velocity"]) < 1000, "rotated stack has bounded angular velocity");
+    }
+    # Adaptive substeps stop a fast circle from tunnelling through a thin wall.
+    fast = Physics2D.world(0, 0, 1 / 60);
+    thin_wall = Physics2D.box(fast, "static", 50, 0, 2, 100, 1, 0, 0);
+    bullet = Physics2D.circle(fast, "dynamic", 0, 0, 2, 1, 0, 0);
+    Physics2D.set_velocity(fast, bullet, 3000, 0);
+    Physics2D.step(fast, 1 / 60);
+    assert(Physics2D.body_info(fast, bullet)["x"] < 49, "adaptive substeps prevent thin-wall clipping");
+    assert(Physics2D.is_colliding(fast, bullet), "fast collision is reported");
+    # Damped spring joints converge on their rest length and expose endpoints.
+    springs = Physics2D.world(0, 0, 1 / 60);
+    anchor = Physics2D.circle(springs, "static", 0, 0, 1);
+    bob = Physics2D.circle(springs, "dynamic", 20, 0, 1, 1, 0, 0);
+    joint = Physics2D.spring(springs, anchor, bob, 10, 80, 12);
+    assert(Physics2D.spring_count(springs) == 1, "spring is added to the world");
+    assert(abs(Physics2D.spring_info(springs, joint)["length"] - 20) < 0.001, "spring_info reports endpoints");
+    for i in range(300) {
+        Physics2D.step(springs, 1 / 60);
+    }
+    spring_info = Physics2D.spring_info(springs, joint);
+    assert(abs(spring_info["length"] - 10) < 0.2, "damped spring converges on rest length");
+    Physics2D.set_spring(springs, joint, 6, 100, 15);
+    assert(Physics2D.spring_info(springs, joint)["rest_length"] == 6, "spring tuning updates at runtime");
+    Physics2D.remove_spring(springs, joint);
+    assert(Physics2D.spring_count(springs) == 0, "spring removal updates the world");
+    assert(Physics2D.spring_info(springs, joint) == none, "removed spring has no info");
+    # The easy slime API hides particle and spring construction.
+    slime_world = Physics2D.world(0, 100, 1 / 60);
+    slime_floor = Physics2D.box(slime_world, "static", 0, 100, 300, 20, 1, 0, 0.8);
+    slime = Physics2D.slime(slime_world, 0, 55, 20, {"points": 8, "squish": 0.7, "mass": 4});
+    assert(Physics2D.slime_count(slime_world) == 1, "one call creates a tracked slime");
+    assert(Physics2D.slime_info(slime_world, slime)["point_count"] == 8, "slime option controls point count");
+    assert(Physics2D.body_count(slime_world) == 9, "slime hides eight particle bodies behind one handle");
+    assert(Physics2D.spring_count(slime_world) == 20, "slime creates edge, brace, and cross springs");
+    for i in range(240) {
+        Physics2D.step(slime_world, 1 / 60);
+    }
+    assert(Physics2D.slime_info(slime_world, slime)["grounded"], "slime aggregates particle ground contacts");
+    settled_slime = Physics2D.slime_info(slime_world, slime);
+    assert(settled_slime["area_ratio"] > 0.7, "resting slime preserves volume instead of becoming a pancake");
+    assert(settled_slime["height"] > settled_slime["radius"] * 0.7, "resting slime keeps a readable blob silhouette");
+    for point in settled_slime["points"] {
+        assert(point[1] < 90, "slime particles stay above the floor instead of clipping through");
+        assert(dist(point[0], point[1], settled_slime["x"], settled_slime["y"]) < 35, "slime stretch limit prevents detached spikes");
+    }
+    Physics2D.slime_move(slime_world, slime, 1);
+    Physics2D.step(slime_world, 1 / 60);
+    assert(Physics2D.slime_info(slime_world, slime)["vx"] > 0, "slime_move drives every hidden particle");
+    assert(Physics2D.slime_jump(slime_world, slime, 200), "grounded slime can jump with one call");
+    assert(Physics2D.slime_info(slime_world, slime)["vy"] < 0, "slime_jump distributes upward velocity");
+    assert(!Physics2D.slime_jump(slime_world, slime, 200), "airborne slime cannot double-jump");
+    jump_vy = Physics2D.slime_info(slime_world, slime)["vy"];
+    Physics2D.slime_hold_jump(slime_world, slime, true, 1200);
+    Physics2D.step(slime_world, 1 / 60);
+    assert(Physics2D.slime_info(slime_world, slime)["vy"] < jump_vy, "holding jump adds upward force");
+    held_vy = Physics2D.slime_info(slime_world, slime)["vy"];
+    Physics2D.slime_hold_jump(slime_world, slime, false);
+    assert(abs(Physics2D.slime_info(slime_world, slime)["vy"]) < abs(held_vy), "releasing jump cuts it short");
+    Physics2D.remove_slime(slime_world, slime);
+    assert(Physics2D.slime_count(slime_world) == 0, "remove_slime releases the high-level object");
+    assert(Physics2D.body_count(slime_world) == 1 and Physics2D.spring_count(slime_world) == 0, "remove_slime cleans up hidden physics objects");
+    # Coyote time permits a jump just after the supporting floor disappears.
+    coyote_world = Physics2D.world(0, 100, 1 / 60);
+    coyote_floor = Physics2D.box(coyote_world, "static", 0, 100, 300, 20);
+    coyote_slime = Physics2D.slime(coyote_world, 0, 55, 20, {"points": 8});
+    for i in range(240) {
+        Physics2D.step(coyote_world, 1 / 60);
+    }
+    Physics2D.remove_body(coyote_world, coyote_floor);
+    Physics2D.step(coyote_world, 1 / 60);
+    assert(Physics2D.slime_jump(coyote_world, coyote_slime, 150), "coyote time allows a late edge jump");
+    # Jump buffering remembers an early press and fires on the landing step.
+    buffer_world = Physics2D.world(0, 100, 1 / 60);
+    buffer_floor = Physics2D.box(buffer_world, "static", 0, 100, 300, 20);
+    buffer_slime = Physics2D.slime(buffer_world, 0, 70, 20, {"points": 8});
+    assert(!Physics2D.slime_jump(buffer_world, buffer_slime, 150), "airborne press enters the jump buffer");
+    Physics2D.step(buffer_world, 1 / 60);
+    assert(Physics2D.slime_info(buffer_world, buffer_slime)["vy"] < 0, "buffered jump fires when contact begins");
+    # Sustained movement approaches but does not exceed the configured cap.
+    speed_world = Physics2D.world(0, 0, 1 / 60);
+    speed_slime = Physics2D.slime(speed_world, 0, 0, 20, {"points": 8, "speed": 120, "air_control": 1});
+    for i in range(180) {
+        Physics2D.slime_move(speed_world, speed_slime, 1);
+        Physics2D.step(speed_world, 1 / 60);
+    }
+    speed_info = Physics2D.slime_info(speed_world, speed_slime);
+    assert(speed_info["vx"] > 100 and speed_info["vx"] <= 120, "slime movement converges on its speed cap");
+    # Default slime geometry has no collision gaps, even at maximum stretch.
+    seam_world = Physics2D.world(0, 0, 1 / 60);
+    seam_slime = Physics2D.slime(seam_world, 0, 0, 50);
+    seam_info = Physics2D.slime_info(seam_world, seam_slime);
+    seam_points = seam_info["points"];
+    for i in range(len(seam_points)) {
+        next = (i + 1) % len(seam_points);
+        edge = dist(seam_points[i][0], seam_points[i][1], seam_points[next][0], seam_points[next][1]);
+        assert(edge * 1.35 <= seam_info["particle_radius"] * 2 + 0.01, "slime perimeter stays collision-continuous at its stretch limit");
+    }
+    Physics2D.slime_set_position(seam_world, seam_slime, 100, 75);
+    moved_slime = Physics2D.slime_info(seam_world, seam_slime);
+    assert(abs(moved_slime["x"] - 100) < 0.001 and abs(moved_slime["y"] - 75) < 0.001, "slime_set_position moves the hidden rig as one object");
+    assert(abs(moved_slime["vx"]) < 0.001 and abs(moved_slime["vy"]) < 0.001, "slime reset clears velocity by default");
+    print "Physics2D tests pass!";
+}

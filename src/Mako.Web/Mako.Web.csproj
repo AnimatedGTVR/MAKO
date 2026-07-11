@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>Mako.Web</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!--
+      Language-only web build: the MAKO interpreter, lexer, parser, and
+      graphics-free packages (Physics2D, Physics3D, System, JSON, string/
+      list/dict/math builtins) compile and run unmodified here — they're
+      pure C#/.NET with zero native dependencies. Only the raylib-cs/
+      Silk.NET/ImGui.NET-bound packages (Mako2D, Mako3D, MakoUI, Audio,
+      Inputs) and Net (blocks synchronously, incompatible with the
+      single-threaded browser-wasm runtime) are unavailable — see
+      GraphicsStubs.cs for the substituted stand-ins, which throw a clear
+      "not available in a web build" error instead of failing to compile
+      or silently doing nothing.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Language core — linked from src/Mako, not copied, so both
+         projects always build from the exact same source. -->
+    <Compile Include="..\Mako\Ast.cs" Link="Ast.cs" />
+    <Compile Include="..\Mako\Formatter.cs" Link="Formatter.cs" />
+    <Compile Include="..\Mako\Interpreter.cs" Link="Interpreter.cs" />
+    <Compile Include="..\Mako\Json.cs" Link="Json.cs" />
+    <Compile Include="..\Mako\Lexer.cs" Link="Lexer.cs" />
+    <Compile Include="..\Mako\MakoAssets.cs" Link="MakoAssets.cs" />
+    <Compile Include="..\Mako\MakoError.cs" Link="MakoError.cs" />
+    <Compile Include="..\Mako\MakoPhysics2D.cs" Link="MakoPhysics2D.cs" />
+    <Compile Include="..\Mako\MakoPhysics3D.cs" Link="MakoPhysics3D.cs" />
+    <Compile Include="..\Mako\MakoSystem.cs" Link="MakoSystem.cs" />
+    <Compile Include="..\Mako\PackageManager.cs" Link="PackageManager.cs" />
+    <Compile Include="..\Mako\PackageRegistry.cs" Link="PackageRegistry.cs" />
+    <Compile Include="..\Mako\Parser.cs" Link="Parser.cs" />
+    <Compile Include="..\Mako\Suggest.cs" Link="Suggest.cs" />
+    <Compile Include="..\Mako\Token.cs" Link="Token.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="9.0.16" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="9.0.16" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SupportedPlatform Include="browser" />
+  </ItemGroup>
+</Project>

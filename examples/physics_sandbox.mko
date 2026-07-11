@@ -1,0 +1,215 @@
+using Mako3D;
+using Physics3D;
+using Inputs;
+using MakoUI;
+
+# A walk-around 3D physics sandbox: fly the camera around an open arena,
+# configure size/color/throw speed in a side panel with a real live 3D
+# preview of what you're about to spawn (not just plain buttons), then
+# click to launch it into the world. Every proven Physics3D shape can be
+# spawned — box, sphere, capsule.
+main() {
+    Mako3D.init(1200, 800, "MAKO Physics Sandbox");
+    Mako3D.fps(60);
+    MakoUI.attach();
+    MakoUI.theme_dark();
+    cam = Mako3D.camera(0, 4, 14, 0, 2, 0);
+    # A small dedicated camera + off-screen render target for the spawn
+    # preview panel — its own tiny 3D scene, orbiting the one object you're
+    # about to spawn, rendered into a texture and blitted into the UI panel.
+    preview_cam = Mako3D.camera(0, 1.6, 4, 0, 0, 0);
+    preview = Mako3D.create_preview(220, 220);
+    preview_angle = 0;
+    world = Physics3D.world(0, -9.81, 0);
+    floor = Physics3D.floor(world);
+    Physics3D.material(world, floor, 0.2, 0.6);
+    bodies = [];
+    # A handful of static blocks scattered around so there's something to
+    # walk around and knock things into, not just an empty floor. These
+    # never move, so they're drawn from their own fixed positions below
+    # rather than round-tripping through body_info() every frame like the
+    # spawned (dynamic) bodies in `bodies`.
+    static_props = [{"x": 6, "y": 1, "z": -4, "size": [3, 2, 3]}, {"x": -7, "y": 1.5, "z": 3, "size": [2, 3, 2]}, {"x": 3, "y": 0.75, "z": 7, "size": [4, 1.5, 2]}];
+    for i in range(len(static_props)) {
+        p = static_props[i];
+        size = p["size"];
+        block = Physics3D.static_box(world, p["x"], p["y"], p["z"], size[0], size[1], size[2]);
+        Physics3D.material(world, block, 0.1, 0.6);
+    }
+    # Spawn settings, driven by the side panel.
+    spawn_shape = "box";
+    spawn_size = 1;
+    # MakoUI.color_picker works in 0-255 (matching Mako3D.color()'s own
+    # scale), so spawn_color is kept in that same range throughout — no
+    # separate 0-1 representation to keep in sync.
+    spawn_color = [230, 90, 90];
+    spawn_speed = 18;
+    gravity_y = -9.81;
+    despawn_depth = -12;
+    spawn_lifetime = 12;
+    command_log = ["Sandbox ready", "Configure a shape on the right, then LEFT CLICK to launch it"];
+    while Mako3D.running() {
+        dt = Mako3D.delta();
+        Mako3D.update_camera(cam, 9);
+        Physics3D.step(world, dt);
+        # Despawn anything that fell off the arena — keeps a long play
+        # session from quietly piling up bodies that cost CPU/GPU for
+        # nothing once they're off-screen forever.
+        alive = [];
+        for i in range(len(bodies)) {
+            body = bodies[i];
+            info = Physics3D.body_info(world, body["id"]);
+            if info == none {
+                continue;
+            }
+            body["age"] = body["age"] + dt;
+            if info["y"] < despawn_depth or body["age"] >= spawn_lifetime {
+                Physics3D.remove_body(world, body["id"]);
+                continue;
+            }
+            push(alive, body);
+        }
+        bodies = alive;
+        if len(command_log) > 7 {
+            command_log = slice(command_log, len(command_log) - 7, len(command_log));
+        }
+        # ── Spawn preview: render the currently-configured shape into its
+        # own tiny off-screen scene, slowly spinning so you can see it from
+        # every angle before you commit to launching it.
+        preview_angle = preview_angle + dt * 40;
+        Mako3D.orbit_camera(preview_cam, preview_angle, 4, 1.6);
+        preview_col = Mako3D.color(spawn_color[0], spawn_color[1], spawn_color[2], 255);
+        Mako3D.begin_preview(preview, preview_cam, Mako3D.color(24, 26, 32));
+        Mako3D.grid(6, 0.5);
+        if spawn_shape == "box" {
+            Mako3D.cube_rot_q(0, 0, 0, spawn_size, spawn_size, spawn_size, 0, 0, 0, 1, preview_col);
+        } else if spawn_shape == "capsule" {
+            Mako3D.capsule(0, 0, 0, spawn_size * 0.35, spawn_size * 1.6, 0, 0, 0, 1, preview_col);
+        } else {
+            Mako3D.sphere_rot_q(0, 0, 0, spawn_size * 0.6, 0, 0, 0, 1, preview_col);
+        }
+        Mako3D.end_preview();
+        # ── Aim + launch: same mouse-ray approach as the physics demo, using
+        # whatever shape/size/color/speed is currently dialed in.
+        if Inputs.mouse_pressed("left") and !MakoUI.wants_mouse() {
+            ray = Mako3D.mouse_ray(cam);
+            col = Mako3D.color(spawn_color[0], spawn_color[1], spawn_color[2], 255);
+            id = 0;
+            if spawn_shape == "box" {
+                id = Physics3D.box(world, ray[0], ray[1], ray[2], spawn_size, spawn_size, spawn_size);
+                push(bodies, {
+                        "id": id,
+                        "shape": "box",
+                        "size": [spawn_size, spawn_size, spawn_size],
+                        "color": col,
+                        "age": 0
+                    });
+            } else if spawn_shape == "capsule" {
+                id = Physics3D.capsule(world, ray[0], ray[1], ray[2], spawn_size * 0.35, spawn_size * 1.6);
+                push(bodies, {
+                        "id": id,
+                        "shape": "capsule",
+                        "radius": spawn_size * 0.35,
+                        "height": spawn_size * 1.6,
+                        "color": col,
+                        "age": 0
+                    });
+            } else {
+                id = Physics3D.sphere(world, ray[0], ray[1], ray[2], spawn_size * 0.6);
+                push(bodies, {
+                        "id": id,
+                        "shape": "sphere",
+                        "radius": spawn_size * 0.6,
+                        "color": col,
+                        "age": 0
+                    });
+            }
+            Physics3D.apply_impulse(world, id, ray[3] * spawn_speed, ray[4] * spawn_speed, ray[5] * spawn_speed);
+            push(command_log, "Spawned " + spawn_shape + " #" + id);
+        }
+        Mako3D.begin();
+        Mako3D.sky(Mako3D.color(16, 20, 28));
+        Mako3D.begin_3d(cam);
+        Mako3D.grid(40, 1);
+        Mako3D.plane(0, 0, 0, 80, 80, Mako3D.color(38, 42, 50));
+        for i in range(len(static_props)) {
+            p = static_props[i];
+            Mako3D.cube_rot_q(p["x"], p["y"], p["z"], p["size"][0], p["size"][1], p["size"][2], 0, 0, 0, 1, Mako3D.DARKGRAY);
+        }
+        for i in range(len(bodies)) {
+            body = bodies[i];
+            info = Physics3D.body_info(world, body["id"]);
+            if info == none {
+                continue;
+            }
+            if body["shape"] == "box" {
+                size = body["size"];
+                Mako3D.cube_rot_q(info["x"], info["y"], info["z"], size[0], size[1], size[2], info["qx"], info["qy"], info["qz"], info["qw"], body["color"]);
+            } else if body["shape"] == "capsule" {
+                Mako3D.capsule(info["x"], info["y"], info["z"], body["radius"], body["height"], info["qx"], info["qy"], info["qz"], info["qw"], body["color"]);
+            } else {
+                Mako3D.sphere_rot_q(info["x"], info["y"], info["z"], body["radius"], info["qx"], info["qy"], info["qz"], info["qw"], body["color"]);
+            }
+        }
+        Mako3D.end_3d();
+        Mako3D.text("MAKO Physics Sandbox", 20, 20, 22, Mako3D.RAYWHITE);
+        Mako3D.text("WASD + mouse-drag(middle): walk  ·  Q/E: up/down  ·  LEFT CLICK: launch", 20, 48, 16, Mako3D.LIGHTGRAY);
+        for i in range(len(command_log)) {
+            Mako3D.text(command_log[i], 20, 750 - (len(command_log) - i) * 20, 14, Mako3D.GRAY);
+        }
+        # ── Spawn panel ───────────────────────────────────────────────────
+        MakoUI.begin();
+        MakoUI.set_window_pos(1200 - 320, 14);
+        MakoUI.set_window_size(306, 540);
+        MakoUI.begin_window("Spawn");
+        MakoUI.text("Preview");
+        MakoUI.preview(preview, 270, 200);
+        MakoUI.separator();
+        MakoUI.text("Shape");
+        if MakoUI.button("Box") {
+            spawn_shape = "box";
+        }
+        MakoUI.same_line();
+        if MakoUI.button("Sphere") {
+            spawn_shape = "sphere";
+        }
+        MakoUI.same_line();
+        if MakoUI.button("Capsule") {
+            spawn_shape = "capsule";
+        }
+        MakoUI.text("Selected: " + spawn_shape);
+        MakoUI.separator();
+        spawn_size = MakoUI.slider("Size", spawn_size, 0.3, 3);
+        spawn_speed = MakoUI.slider("Throw speed", spawn_speed, 2, 40);
+        MakoUI.separator();
+        MakoUI.text("Color");
+        spawn_color = MakoUI.color_picker("##spawn_color", spawn_color[0], spawn_color[1], spawn_color[2]);
+        MakoUI.separator();
+        MakoUI.text("Gravity");
+        new_gravity_y = MakoUI.slider("Gravity Y", gravity_y, -30, 30);
+        if new_gravity_y != gravity_y {
+            gravity_y = new_gravity_y;
+            Physics3D.gravity(world, 0, gravity_y, 0);
+        }
+        if MakoUI.button("Reset") {
+            gravity_y = -9.81;
+            Physics3D.gravity(world, 0, gravity_y, 0);
+        }
+        MakoUI.same_line();
+        if MakoUI.button("Zero-G") {
+            gravity_y = 0;
+            Physics3D.gravity(world, 0, gravity_y, 0);
+        }
+        MakoUI.same_line();
+        if MakoUI.button("Flip") {
+            gravity_y = -gravity_y;
+            Physics3D.gravity(world, 0, gravity_y, 0);
+        }
+        MakoUI.separator();
+        MakoUI.fps_counter();
+        MakoUI.end_window();
+        MakoUI.end();
+        Mako3D.end();
+    }
+    Mako3D.close();
+}

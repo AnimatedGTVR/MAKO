@@ -66,6 +66,26 @@ WRAPPER
             cp -r "$SCRIPT_DIR/examples" "$MKO_DATA/"
             echo "Installed examples → $MKO_DATA/examples/"
         fi
+        if [ -d "$SCRIPT_DIR/Images" ]; then
+            cp -r "$SCRIPT_DIR/Images" "$MKO_DATA/"
+            echo "Installed example images → $MKO_DATA/Images/"
+        fi
+
+        # Install Mako.Web's source too, so `mko build --target web` can
+        # `dotnet publish` it even when running the installed binary from
+        # outside the repo checkout (Foundry.cs's FindMakoWebProject looks
+        # here as a fallback). Mako.Web.csproj links (not copies) files out
+        # of src/Mako via relative "..\Mako\X.cs" paths, so src/Mako must be
+        # installed alongside it at the same relative layout.
+        if [ -d "$SCRIPT_DIR/src/Mako.Web" ]; then
+            mkdir -p "$MKO_DATA/src"
+            rm -rf "$MKO_DATA/src/Mako.Web" "$MKO_DATA/src/Mako"
+            cp -r "$SCRIPT_DIR/src/Mako.Web" "$MKO_DATA/src/"
+            cp -r "$SCRIPT_DIR/src/Mako" "$MKO_DATA/src/"
+            rm -rf "$MKO_DATA/src/Mako.Web/bin" "$MKO_DATA/src/Mako.Web/obj" \
+                   "$MKO_DATA/src/Mako/bin" "$MKO_DATA/src/Mako/obj"
+            echo "Installed Mako.Web source → $MKO_DATA/src/Mako.Web/ (for web builds)"
+        fi
         ;;
 
     clean)

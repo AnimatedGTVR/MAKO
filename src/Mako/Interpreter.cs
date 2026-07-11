@@ -9,9 +9,161 @@ sealed class MakoFn(List<string> parms, List<Statement> body, Dictionary<string,
     public override string ToString() => $"fn({string.Join(", ", Params)})"  ;
 }
 
+/// The embedding contract: what a host application (e.g. a game engine
+/// hosting MAKO as its scripting layer) hands to an Interpreter so scripts
+/// can call back into the host. This is "ctx" — the object an embedder
+/// builds once, registers its own engine calls onto, and passes into every
+/// Interpreter it creates.
+///
+/// Design mirrors MAKO's own native packages (Physics3D, Mako3D, ...):
+/// host functions are registered under "Namespace.function" names and
+/// dispatch through the exact same List<object?> -> object? calling
+/// convention every built-in native function already uses — a script
+/// calling a host function looks identical to calling a built-in one, and
+/// a host's namespace behaves like any other `using X;` package (see
+/// Interpreter.RegisterHostPackage / the `using` handling in ExecuteCore).
+///
+///   var ctx = new MakoHostContext();
+///   ctx.RegisterFunction("Engine.spawn", (double x, double y) => (double)engine.Spawn(x, y));
+///   ctx.RegisterFunction("Engine.delta_time", () => (double)engine.DeltaTime);
+///   ctx.RegisterPackage("Engine"); // makes `using Engine;` valid in scripts
+///   var interp = new Interpreter(ctx);
+///   interp.Execute(program);
+public sealed class MakoHostContext
+{
+    private readonly Dictionary<string, Func<List<object?>, object?>> _functions = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _packages = new(StringComparer.OrdinalIgnoreCase);
+
+    /// Registers a host callback under a fully-qualified name, e.g.
+    /// "Engine.spawn" — scripts call it exactly like a built-in native
+    /// function: Engine.spawn(x, y, z). Arguments arrive as MAKO runtime
+    /// values (double | string | bool | List<object?> | Dictionary<string,
+    /// object?> | null); return the same types back.
+    ///
+    /// This is the escape hatch for anything the typed overloads below
+    /// don't cover (variadic arity, lists/dicts, custom validation) — for
+    /// the common case of "a handful of numbers/strings/bools in, one
+    /// value out," prefer a typed overload instead: it reads like an
+    /// ordinary C# method and needs no manual (double)args[0]! casting.
+    public void RegisterFunction(string qualifiedName, Func<List<object?>, object?> fn)
+    {
+        if (string.IsNullOrWhiteSpace(qualifiedName) || !qualifiedName.Contains('.'))
+            throw new ArgumentException("qualifiedName must be \"Namespace.function\", e.g. \"Engine.spawn\"", nameof(qualifiedName));
+        _functions[qualifiedName] = fn ?? throw new ArgumentNullException(nameof(fn));
+    }
+
+    // ── Typed overloads ──────────────────────────────────────────────────
+    //
+    // MAKO's own rule: if it's hard to type, it's hard to understand. The
+    // raw RegisterFunction(name, args => (double)args[0]! ...) form makes
+    // every host function pay for arity checking and manual casting by
+    // hand. These overloads take an ordinary strongly-typed C# delegate —
+    // Func<double, double>, Action<string>, etc. — and do the arity check
+    // and boxing/unboxing once, here, instead of in every host callback.
+    //
+    // Covers 0–3 typed parameters (double/string/bool), with or without a
+    // return value, which is every host function actually seen in
+    // practice so far (spawn(x, y), delta_time(), etc.). A host with a
+    // genuinely different shape (more parameters, lists/dicts, variadic)
+    // still has the raw RegisterFunction overload above.
+
+    public void RegisterFunction(string qualifiedName, Func<object?> fn) =>
+        RegisterFunction(qualifiedName, args => { RequireArity(qualifiedName, args, 0); return fn(); });
+
+    public void RegisterFunction(string qualifiedName, Action fn) =>
+        RegisterFunction(qualifiedName, args => { RequireArity(qualifiedName, args, 0); fn(); return null; });
+
+    public void RegisterFunction<T1>(string qualifiedName, Func<T1, object?> fn) =>
+        RegisterFunction(qualifiedName, args =>
+        {
+            RequireArity(qualifiedName, args, 1);
+            return fn(Cast<T1>(qualifiedName, args, 0));
+        });
+
+    public void RegisterFunction<T1>(string qualifiedName, Action<T1> fn) =>
+        RegisterFunction(qualifiedName, args =>
+        {
+            RequireArity(qualifiedName, args, 1);
+            fn(Cast<T1>(qualifiedName, args, 0));
+            return null;
+        });
+
+    public void RegisterFunction<T1, T2>(string qualifiedName, Func<T1, T2, object?> fn) =>
+        RegisterFunction(qualifiedName, args =>
+        {
+            RequireArity(qualifiedName, args, 2);
+            return fn(Cast<T1>(qualifiedName, args, 0), Cast<T2>(qualifiedName, args, 1));
+        });
+
+    public void RegisterFunction<T1, T2>(string qualifiedName, Action<T1, T2> fn) =>
+        RegisterFunction(qualifiedName, args =>
+        {
+            RequireArity(qualifiedName, args, 2);
+            fn(Cast<T1>(qualifiedName, args, 0), Cast<T2>(qualifiedName, args, 1));
+            return null;
+        });
+
+    public void RegisterFunction<T1, T2, T3>(string qualifiedName, Func<T1, T2, T3, object?> fn) =>
+        RegisterFunction(qualifiedName, args =>
+        {
+            RequireArity(qualifiedName, args, 3);
+            return fn(Cast<T1>(qualifiedName, args, 0), Cast<T2>(qualifiedName, args, 1), Cast<T3>(qualifiedName, args, 2));
+        });
+
+    public void RegisterFunction<T1, T2, T3>(string qualifiedName, Action<T1, T2, T3> fn) =>
+        RegisterFunction(qualifiedName, args =>
+        {
+            RequireArity(qualifiedName, args, 3);
+            fn(Cast<T1>(qualifiedName, args, 0), Cast<T2>(qualifiedName, args, 1), Cast<T3>(qualifiedName, args, 2));
+            return null;
+        });
+
+    private static void RequireArity(string qualifiedName, List<object?> args, int expected)
+    {
+        if (args.Count != expected)
+            throw new MakoError($"{qualifiedName}() expects {expected} argument(s), got {args.Count}");
+    }
+
+    // Only double/string/bool are supported here — MAKO's own runtime
+    // value types minus list/dict/null, which the raw List<object?>
+    // overload handles instead. A bad host-side T (or a script passing
+    // the wrong argument type) throws a clear, host-attributable error
+    // rather than an opaque InvalidCastException from deep inside a
+    // lambda.
+    private static T Cast<T>(string qualifiedName, List<object?> args, int index)
+    {
+        object? value = args[index];
+        object converted = typeof(T) switch
+        {
+            var t when t == typeof(double) => value is double d ? d
+                : throw new MakoError($"{qualifiedName}() argument {index + 1} must be a number"),
+            var t when t == typeof(string) => value is string s ? s
+                : throw new MakoError($"{qualifiedName}() argument {index + 1} must be a string"),
+            var t when t == typeof(bool) => value is bool b ? b
+                : throw new MakoError($"{qualifiedName}() argument {index + 1} must be a bool"),
+            _ => throw new ArgumentException(
+                $"RegisterFunction typed overloads only support double/string/bool — use the " +
+                $"List<object?> overload for '{qualifiedName}' instead", nameof(T)),
+        };
+        return (T)converted;
+    }
+
+    /// Marks a namespace as a valid `using X;` target in scripts, even
+    /// though it isn't one of MAKO's own built-in packages. Call this once
+    /// per namespace you register functions under — RegisterFunction alone
+    /// makes the function callable, but `using Engine;` would still fail
+    /// with "package not found" without a matching RegisterPackage("Engine").
+    public void RegisterPackage(string name) => _packages.Add(name);
+
+    internal bool IsHostPackage(string name) => _packages.Contains(name);
+
+    internal bool TryGetFunction(string qualifiedName, out Func<List<object?>, object?> fn) =>
+        _functions.TryGetValue(qualifiedName, out fn!);
+}
+
 /// Tree-walk interpreter.
 /// Runtime value types:  string | double | bool | List<object?> | null
-class Interpreter
+public class Interpreter
 {
     // Control flow (return/break/continue) is tracked with a plain flag rather
     // than thrown exceptions — in .NET, throwing captures a stack trace on
@@ -20,14 +172,37 @@ class Interpreter
     private enum Flow { None, Return, Break, Continue }
 
     private readonly Dictionary<string, FnDecl> _funcs = new();
+    private readonly Dictionary<string, StructDecl> _structs = new();
+
+    /// Struct names known so far — used by the REPL to tell a fresh Parser
+    /// about structs declared on earlier lines (see the Parser ctor overload).
+    public IEnumerable<string> KnownStructNames => _structs.Keys;
     private MakoUI? _ui;
     private bool    _rayActive;
     private bool    _ray2DActive;
     private bool    _ray3DActive;
+    private bool    _physics2DActive;
+    private bool    _physics3DActive;
     private bool    _inputsActive;
     private bool    _audioActive;
     private bool    _netActive;
+    private bool    _systemActive;
     public  List<string> ScriptArgs { get; set; } = [];
+
+    /// The embedding host's context, if this interpreter was constructed by
+    /// a host application rather than the mko CLI. Null for ordinary script
+    /// runs — every host-function/host-package check below is a no-op when
+    /// this is null, so embedding support adds no behavior change for the
+    /// standalone CLI path.
+    private readonly MakoHostContext? _host;
+    private readonly HashSet<string> _hostPackagesActive = new(StringComparer.OrdinalIgnoreCase);
+
+    public Interpreter() { }
+
+    /// Constructs an interpreter bound to a host embedding context — see
+    /// MakoHostContext's doc comment for the full embedding contract this
+    /// is part of.
+    public Interpreter(MakoHostContext host) => _host = host;
 
     // Control-flow state for return/break/continue — see the Flow enum above.
     private Flow    _flow;
@@ -43,7 +218,30 @@ class Interpreter
 
     // ── Entry point ───────────────────────────────────────────────────────────
 
-    public void Execute(ProgramNode program, string baseDir = "")
+    /// Public embedding entry point: parses and runs MAKO source text
+    /// directly, so a host application never needs to touch MAKO's
+    /// internal AST/lexer/parser types — those stay internal to this
+    /// assembly. This is the method a host (e.g. a game engine embedding
+    /// MAKO via a MakoHostContext) calls to run a script.
+    ///
+    ///   var ctx = new MakoHostContext();
+    ///   ctx.RegisterFunction("Engine.spawn", (double x, double y) => (double)engine.Spawn(x, y));
+    ///   ctx.RegisterPackage("Engine");
+    ///   var interp = new Interpreter(ctx);
+    ///   interp.Run(scriptSource);
+    ///
+    /// baseDir resolves relative `use "file.mko"` imports and asset paths
+    /// the same way the mko CLI resolves them relative to the script's own
+    /// directory — pass the host project's script directory if scripts use
+    /// local imports.
+    public void Run(string source, string baseDir = "")
+    {
+        var tokens = new Lexer(source).Tokenize();
+        var program = new Parser(tokens).Parse();
+        Execute(program, baseDir);
+    }
+
+    internal void Execute(ProgramNode program, string baseDir = "")
     {
         try { ExecuteCore(program, baseDir); }
         finally
@@ -57,18 +255,23 @@ class Interpreter
             if (_ray2DActive) MakoRay2D.UnloadAll();
             if (_ray3DActive) MakoRay3D.UnloadAll();
             if (_audioActive) MakoAudio.UnloadAll();
-            if (hadWindow && Raylib_cs.Raylib.IsWindowReady())
-                Raylib_cs.Raylib.CloseWindow();
-            _rayActive = _ray2DActive = _ray3DActive = _audioActive = false;
+            if (_physics2DActive) MakoPhysics2D.ResetAll();
+            if (_physics3DActive) MakoPhysics3D.ResetAll();
+            if (hadWindow && MakoRay.IsWindowReady())
+                MakoRay.CloseWindow();
+            _rayActive = _ray2DActive = _ray3DActive = _physics2DActive = _physics3DActive = _audioActive = false;
         }
     }
 
     /// REPL entry — runs in the persistent interpreter state, prints expression results.
-    public void ExecuteRepl(ProgramNode program)
+    internal void ExecuteRepl(ProgramNode program)
     {
         // Register any new functions declared in this line.
         foreach (var fn in program.Functions)
             _funcs[fn.Name] = fn;
+
+        foreach (var sd in program.Structs)
+            _structs[sd.Name] = sd;
 
         foreach (var (cname, cexpr) in program.Constants)
         {
@@ -104,6 +307,16 @@ class Interpreter
         // ── using PackageName [from "source"] — named packages ───────────────
         foreach (var pkg in program.Packages)
         {
+            // Host-registered packages (see MakoHostContext) short-circuit
+            // entirely before PackageManager gets involved — they're not on
+            // disk and not in the git-clone registry, so Ensure() would
+            // otherwise reject them as unknown.
+            if (_host != null && _host.IsHostPackage(pkg.Name))
+            {
+                _hostPackagesActive.Add(pkg.Name);
+                continue;
+            }
+
             if (pkg.Source != null)
                 PackageManager.RegisterSource(pkg.Name, pkg.Source);
 
@@ -136,6 +349,29 @@ class Interpreter
                     _ray3DActive = true;
                 }
 
+                if (pkg.Name.Equals("Physics2D", StringComparison.OrdinalIgnoreCase))
+                    _physics2DActive = true;
+
+                if (pkg.Name.Equals("Physics3D", StringComparison.OrdinalIgnoreCase))
+                    _physics3DActive = true;
+
+                if (pkg.Name.Equals("JoltPhysics", StringComparison.OrdinalIgnoreCase) ||
+                    pkg.Name.Equals("PhysX", StringComparison.OrdinalIgnoreCase) ||
+                    pkg.Name.Equals("BulletPhysics", StringComparison.OrdinalIgnoreCase))
+                {
+                    string backend = pkg.Name.Equals("JoltPhysics", StringComparison.OrdinalIgnoreCase) ? "jolt" :
+                        pkg.Name.Equals("PhysX", StringComparison.OrdinalIgnoreCase) ? "physx" : "bullet";
+                    MakoPhysics3D.SelectDefaultBackend(pkg.Name, backend);
+                    _physics3DActive = true;
+                }
+
+                if (pkg.Name.Equals("Box2D", StringComparison.OrdinalIgnoreCase))
+                {
+                    var backend = PhysicsBackends.Find("box2d");
+                    if (!backend.Installed) throw new MakoError($"using Box2D: {backend.Status}");
+                    _physics2DActive = true;
+                }
+
                 if (pkg.Name.Equals("Inputs", StringComparison.OrdinalIgnoreCase))
                     _inputsActive = true;
 
@@ -144,6 +380,9 @@ class Interpreter
 
                 if (pkg.Name.Equals("Net", StringComparison.OrdinalIgnoreCase))
                     _netActive = true;
+
+                if (pkg.Name.Equals("System", StringComparison.OrdinalIgnoreCase))
+                    _systemActive = true;
 
                 continue;
             }
@@ -202,6 +441,9 @@ class Interpreter
             if (program.Namespace is { } ns)
                 _funcs[$"{ns}.{fn.Name}"] = fn;
         }
+
+        foreach (var sd in program.Structs)
+            _structs[sd.Name] = sd;
 
         // Top-level const declarations — evaluated once, marked immutable globally.
         foreach (var (cname, cexpr) in program.Constants)
@@ -274,6 +516,13 @@ class Interpreter
                 SetVar(a.Name, Eval(a.Value));
                 break;
 
+            case FieldAssignStmt fa:
+                var faTarget = Eval(fa.Target);
+                if (faTarget is not Dictionary<string, object?> faDict)
+                    throw new MakoError($"cannot assign field '{fa.Field}' on {TypeName(faTarget)} — only dicts/structs have fields");
+                faDict[fa.Field] = Eval(fa.Value);
+                break;
+
             case ConstStmt c:
                 var constVal = Eval(c.Value);
                 if (_scopes[^1].Consts.Contains(c.Name))
@@ -330,7 +579,7 @@ class Interpreter
                 if (iterable is List<object?> lst2)
                     items = lst2;
                 else if (iterable is Dictionary<string, object?> iterDict)
-                    items = iterDict.Keys.Select(k => (object?)k).ToList();
+                    items = iterDict.Keys.Where(k => k != StructTypeKey).Select(k => (object?)k).ToList();
                 else
                     throw new MakoError($"'for' needs a list or dict to loop over, got {TypeName(iterable)}"
                         + (iterable is string ? " — to loop over characters, use split(text, \"\")" : "")
@@ -384,6 +633,9 @@ class Interpreter
                 Eval(e.Value);
                 break;
 
+            case ThrowStmt th:
+                throw new MakoError(Stringify(Eval(th.Message)));
+
             default:
                 throw new MakoError($"Unknown statement type: {stmt.GetType().Name}");
         }
@@ -428,9 +680,108 @@ class Interpreter
         BinaryExpr bin       => EvalBinary(bin),
         LogicalExpr l        => EvalLogical(l),
         CallExpr c           => CallFunction(c.Name, c.Args),
-        NamespacedCallExpr n => CallFunction($"{n.Ns}.{n.Func}", n.Args),
+        NamespacedCallExpr n => EvalNamespacedCall(n),
+        FieldExpr fe         => EvalField(fe),
+        MethodCallExpr mc    => EvalMethodCall(mc),
+        StructLitExpr sl     => EvalStructLit(sl),
         _                    => throw new MakoError($"Unknown expression type: {expr.GetType().Name}"),
     };
+
+    /// "Ns.func(args)" is ambiguous at parse time between a package call
+    /// (Net.get(...)) and a struct method call on a variable (p.dist(...)) —
+    /// both parse to the same NamespacedCallExpr shape. Resolve it here,
+    /// where the actual runtime value of "Ns" (if it's a variable at all)
+    /// is available: a struct-tagged dict dispatches as a method; anything
+    /// else falls back to the flat "Ns.func" name (native/package functions).
+    private object? EvalNamespacedCall(NamespacedCallExpr n)
+    {
+        if (TryGetVar(n.Ns, out var maybeSelf) && maybeSelf is Dictionary<string, object?> selfDict)
+            return CallMethod(selfDict, n.Func, n.Args);
+
+        return CallFunction($"{n.Ns}.{n.Func}", n.Args);
+    }
+
+    private object? EvalField(FieldExpr fe)
+    {
+        var target = Eval(fe.Target);
+        if (target is not Dictionary<string, object?> dict)
+            throw new MakoError($"cannot access field '{fe.Field}' on {TypeName(target)} — only dicts/structs have fields");
+        if (dict.TryGetValue(fe.Field, out var val)) return val;
+        throw new MakoError($"'{TypeName(dict)}' has no field '{fe.Field}'");
+    }
+
+    private object? EvalMethodCall(MethodCallExpr mc)
+    {
+        var target = Eval(mc.Target);
+        if (target is not Dictionary<string, object?> dict)
+            throw new MakoError($"cannot call method '{mc.Method}' on {TypeName(target)}");
+        return CallMethod(dict, mc.Method, mc.Args);
+    }
+
+    /// Dispatches instance.method(args) to a 'fn TypeName.method(self, ...)'
+    /// declaration, found via the instance's "__type" tag. self is passed
+    /// as the method's first parameter, matching how it's written.
+    private object? CallMethod(Dictionary<string, object?> self, string method, List<Expr> argExprs)
+    {
+        if (!self.TryGetValue(StructTypeKey, out var typeVal) || typeVal is not string typeName)
+            throw new MakoError($"cannot call method '{method}' on a plain dict — only struct instances have methods");
+
+        var fnName = $"{typeName}.{method}";
+        if (!_funcs.TryGetValue(fnName, out var fn))
+        {
+            var suggestion = Suggest.Closest(fnName, _funcs.Keys);
+            throw new MakoError($"'{typeName}' has no method '{method}'")
+            {
+                Hint = suggestion != null ? $"did you mean '{suggestion}'?" : null
+            };
+        }
+
+        var args = argExprs.ConvertAll(Eval);
+        if (args.Count + 1 != fn.Params.Count)
+            throw new MakoError(
+                $"'{fnName}' expects {fn.Params.Count - 1} argument(s) (plus self), got {args.Count}");
+
+        PushScope();
+        _scopes[^1].Vars[fn.Params[0]] = self;
+        for (int i = 0; i < args.Count; i++)
+            _scopes[^1].Vars[fn.Params[i + 1]] = args[i];
+
+        object? ret = null;
+        try
+        {
+            RunBlock(fn.Body);
+            if (_flow == Flow.Return) ret = _returnValue;
+            ResetFlowAtTopLevel();
+        }
+        finally { PopScope(); }
+        return ret;
+    }
+
+    private object? EvalStructLit(StructLitExpr sl)
+    {
+        if (!_structs.TryGetValue(sl.TypeName, out var decl))
+            throw new MakoError($"unknown struct '{sl.TypeName}'");
+
+        var instance = new Dictionary<string, object?> { [StructTypeKey] = sl.TypeName };
+        foreach (var (field, valueExpr) in sl.Fields)
+        {
+            if (!decl.Fields.Contains(field))
+            {
+                var suggestion = Suggest.Closest(field, decl.Fields);
+                throw new MakoError($"'{sl.TypeName}' has no field '{field}'")
+                {
+                    Hint = suggestion != null ? $"did you mean '{suggestion}'?" : null
+                };
+            }
+            instance[field] = Eval(valueExpr);
+        }
+
+        var missing = decl.Fields.Where(f => !instance.ContainsKey(f)).ToList();
+        if (missing.Count > 0)
+            throw new MakoError($"'{sl.TypeName} {{ ... }}' is missing field(s): {string.Join(", ", missing)}");
+
+        return instance;
+    }
 
     private Dictionary<string, object?> EvalDict(DictLit d)
     {
@@ -643,7 +994,7 @@ class Interpreter
         "MakoUI.checkbox", "MakoUI.slider", "MakoUI.slider_int",
         "MakoUI.drag", "MakoUI.drag_int", "MakoUI.drag_range",
         "MakoUI.input_text", "MakoUI.input_number", "MakoUI.input_text_multi",
-        "MakoUI.combo",
+        "MakoUI.combo", "MakoUI.preview",
         "MakoUI.collapsing", "MakoUI.progress",
         // MakoUI — layout
         "MakoUI.separator", "MakoUI.same_line", "MakoUI.spacing", "MakoUI.new_line",
@@ -662,7 +1013,7 @@ class Interpreter
         "MakoUI.tooltip", "MakoUI.set_tooltip",
         // MakoUI — query
         "MakoUI.is_hovered", "MakoUI.is_clicked", "MakoUI.is_key_pressed",
-        "MakoUI.get_time", "MakoUI.framerate", "MakoUI.fps_counter", "MakoUI.wants_mouse", "MakoUI.color_picker",
+        "MakoUI.get_time", "MakoUI.framerate", "MakoUI.fps_counter", "MakoUI.wants_mouse", "MakoUI.wants_keyboard", "MakoUI.color_picker",
         "MakoUI.begin_tab_bar", "MakoUI.end_tab_bar", "MakoUI.begin_tab_item", "MakoUI.end_tab_item",
         // MakoUI — style & themes
         "MakoUI.push_color", "MakoUI.pop_color", "MakoUI.push_var", "MakoUI.pop_var",
@@ -873,7 +1224,7 @@ class Interpreter
                 {
                     string s                      => (double)s.Length,
                     List<object?> l               => (double)l.Count,
-                    Dictionary<string, object?> d => (double)d.Count,
+                    Dictionary<string, object?> d => (double)(d.ContainsKey(StructTypeKey) ? d.Count - 1 : d.Count),
                     _ => throw new MakoError($"len() expects a string, list, or dict, got '{TypeName(args[0])}'"),
                 };
                 return true;
@@ -997,12 +1348,14 @@ class Interpreter
             // ── Dict builtins ─────────────────────────────────────────────────
             case "keys":
                 RequireArity(name, args, 1);
-                result = AsDict(name, args[0]).Keys.Select(k => (object?)k).ToList();
+                result = AsDict(name, args[0]).Keys.Where(k => k != StructTypeKey)
+                                                    .Select(k => (object?)k).ToList();
                 return true;
 
             case "values":
                 RequireArity(name, args, 1);
-                result = AsDict(name, args[0]).Values.ToList();
+                result = AsDict(name, args[0])
+                    .Where(kv => kv.Key != StructTypeKey).Select(kv => kv.Value).ToList();
                 return true;
 
             case "remove":
@@ -1413,9 +1766,19 @@ class Interpreter
             case "MakoUI.fps_counter":
                 RequireArity(name, args, 0);
                 EnsureUI(name); _ui!.FpsCounter(); result = null; return true;
+            case "MakoUI.preview":
+                if (args.Count < 1 || args.Count > 3) throw new MakoError("MakoUI.preview() expects (handle, width=220, height=220)");
+                EnsureUI(name);
+                _ui!.Preview((int)AsNum(name, args[0]),
+                    args.Count > 1 ? (float)AsNum(name, args[1]) : 220,
+                    args.Count > 2 ? (float)AsNum(name, args[2]) : 220);
+                result = null; return true;
             case "MakoUI.wants_mouse":
                 RequireArity(name, args, 0);
                 EnsureUI(name); result = (object?)_ui!.WantsMouse(); return true;
+            case "MakoUI.wants_keyboard":
+                RequireArity(name, args, 0);
+                EnsureUI(name); result = (object?)_ui!.WantsKeyboard(); return true;
 
             case "MakoUI.color_picker":
                 if (args.Count != 4) throw new MakoError("MakoUI.color_picker() expects (label, r, g, b)");
@@ -1462,6 +1825,22 @@ class Interpreter
                         { result = fn3d(args); return true; }
                     throw new MakoError($"Mako3D.{fn3}() wasn't found");
                 }
+                if (name.StartsWith("Physics2D.", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!_physics2DActive) throw new MakoError($"{name}() requires 'using Physics2D;'");
+                    var fnP = name["Physics2D.".Length..];
+                    if (MakoPhysics2D.Funcs.TryGetValue(fnP, out var fnPhysics))
+                        { result = fnPhysics(args); return true; }
+                    throw new MakoError($"Physics2D.{fnP}() wasn't found");
+                }
+                if (name.StartsWith("Physics3D.", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!_physics3DActive) throw new MakoError($"{name}() requires 'using Physics3D;'");
+                    var fnP3 = name["Physics3D.".Length..];
+                    if (MakoPhysics3D.Funcs.TryGetValue(fnP3, out var fnPhysics3))
+                        { result = fnPhysics3(args); return true; }
+                    throw new MakoError($"Physics3D.{fnP3}() wasn't found");
+                }
                 if (name.StartsWith("Inputs.", StringComparison.OrdinalIgnoreCase))
                 {
                     if (!_inputsActive) throw new MakoError($"{name}() requires 'using Inputs;'");
@@ -1485,6 +1864,35 @@ class Interpreter
                     if (MakoNet.Funcs.TryGetValue(fnN, out var fnNe))
                         { result = fnNe(args); return true; }
                     throw new MakoError($"Net.{fnN}() wasn't found");
+                }
+                if (name.StartsWith("System.", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!_systemActive) throw new MakoError($"{name}() requires 'using System;'");
+                    var fnS = name["System.".Length..];
+                    if (MakoSystem.Funcs.TryGetValue(fnS, out var fnSy))
+                        { result = fnSy(args); return true; }
+                    throw new MakoError($"System.{fnS}() wasn't found");
+                }
+                // ── Host-registered functions (embedding) ─────────────────────────
+                // Any "Namespace.func" call that didn't match one of MAKO's own
+                // built-in packages above falls through to the embedding host's
+                // context, if one was supplied — see MakoHostContext. Gated by
+                // RegisterPackage the same way built-ins are gated by
+                // 'using X;', so a host namespace behaves identically to a
+                // built-in one from a script's point of view.
+                if (_host != null)
+                {
+                    int dot = name.IndexOf('.');
+                    if (dot > 0)
+                    {
+                        var ns = name[..dot];
+                        if (_hostPackagesActive.Contains(ns))
+                        {
+                            if (_host.TryGetFunction(name, out var hostFn))
+                                { result = hostFn(args); return true; }
+                            throw new MakoError($"{name}() wasn't found");
+                        }
+                    }
                 }
                 return false;
         }
@@ -1546,6 +1954,21 @@ class Interpreter
     {
         for (int i = _scopes.Count - 1; i >= 0; i--)
             if (_scopes[i].Vars.TryGetValue(name, out var v)) return v;
+
+        // Not found as a flattened "Base.Field" name (how 'using'd namespace
+        // constants like MakoRay.RED are stored). If "Base" is a variable
+        // holding a dict/struct instance, treat this as field access instead
+        // — the parser can't tell struct-field access from a namespace
+        // constant apart at parse time (both are just "Ident.Ident"), so
+        // this fallback is where that ambiguity actually gets resolved.
+        int dot = name.IndexOf('.');
+        if (dot > 0 && TryGetVar(name[..dot], out var baseVal) &&
+            baseVal is Dictionary<string, object?> dict)
+        {
+            var field = name[(dot + 1)..];
+            if (dict.TryGetValue(field, out var fieldVal)) return fieldVal;
+            throw new MakoError($"'{TypeName(dict)}' has no field '{field}'");
+        }
 
         var candidates  = _scopes.SelectMany(s => s.Vars.Keys)
                                  .Concat(_funcs.Keys)
@@ -1723,6 +2146,12 @@ class Interpreter
         return s.Length > 24 ? s[..21] + "..." : s;
     }
 
+    /// Key structs are tagged with internally, so a struct instance can
+    /// carry its type name (for type() and method dispatch) while still
+    /// being a plain dict everywhere else — indexing, merge(), json_encode,
+    /// etc. all keep working on it unchanged.
+    private const string StructTypeKey = "__type";
+
     private static string TypeName(object? val) => val switch
     {
         null                          => "none",
@@ -1730,7 +2159,7 @@ class Interpreter
         double                        => "number",
         string                        => "string",
         List<object?>                 => "list",
-        Dictionary<string, object?>   => "dict",
+        Dictionary<string, object?> d => d.TryGetValue(StructTypeKey, out var t) && t is string ts ? ts : "dict",
         MakoFn                        => "fn",
         _                             => "unknown",
     };

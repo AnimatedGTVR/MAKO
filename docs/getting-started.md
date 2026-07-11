@@ -167,5 +167,5 @@ main() {
 
 ## 8. What's next
 
-- [Language Reference](language-reference.md) — complete v0.02 spec
-- [Roadmap](roadmap.md) — what is planned for v0.03 and beyond
+- [Language Reference](language-reference.md) — the complete spec
+- [Roadmap](roadmap.md) — what's built and what's still planned

@@ -99,6 +99,13 @@ static class Formatter
                 Line($"const {cname} = {Expr(cexpr)};");
             if (p.Constants.Count > 0) Blank();
 
+            foreach (var sd in p.Structs)
+            {
+                if (sd.Line > 0) FlushCommentsBefore(sd.Line);
+                Line($"struct {sd.Name} {{ {string.Join(", ", sd.Fields)} }}");
+            }
+            if (p.Structs.Count > 0) Blank();
+
             for (int i = 0; i < p.Functions.Count; i++)
             {
                 // Emit standalone comments that precede this fn declaration.
@@ -167,11 +174,15 @@ static class Formatter
                     break;
 
                 case AssignStmt a:
-                    Line($"{a.Name} = {Expr(a.Value)};");
+                    Line($"{a.Name}{(a.TypeHint != null ? $": {a.TypeHint}" : "")} = {Expr(a.Value)};");
                     break;
 
                 case IndexAssignStmt ia:
                     Line($"{ia.Name}{string.Concat(ia.Indices.Select(idx => $"[{Expr(idx)}]"))} = {Expr(ia.Value)};");
+                    break;
+
+                case FieldAssignStmt fa:
+                    Line($"{Expr(fa.Target)}.{fa.Field} = {Expr(fa.Value)};");
                     break;
 
                 case IfStmt i:
@@ -239,6 +250,10 @@ static class Formatter
                     Line($"run {Expr(r.Command)};");
                     break;
 
+                case ThrowStmt th:
+                    Line($"throw {Expr(th.Message)};");
+                    break;
+
                 case ExprStmt e:
                     Line($"{Expr(e.Value)};");
                     break;
@@ -269,8 +284,17 @@ static class Formatter
             InputExpr inp           => $"input {Expr(inp.Prompt)}",
             CallExpr c              => $"{c.Name}({string.Join(", ", c.Args.Select(Expr))})",
             NamespacedCallExpr n    => $"{n.Ns}.{n.Func}({string.Join(", ", n.Args.Select(Expr))})",
+            FieldExpr fe            => $"{Expr(fe.Target)}.{fe.Field}",
+            MethodCallExpr mc       => $"{Expr(mc.Target)}.{mc.Method}({string.Join(", ", mc.Args.Select(Expr))})",
+            StructLitExpr sl        => StructLitStr(sl),
             _                       => $"/* ? {e.GetType().Name} */",
         };
+
+        private string StructLitStr(StructLitExpr sl)
+        {
+            var entries = sl.Fields.Select(f => $"{f.Field}: {Expr(f.Value)}");
+            return $"{sl.TypeName} {{ {string.Join(", ", entries)} }}";
+        }
 
         private string DictExpr(DictLit d)
         {

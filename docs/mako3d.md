@@ -231,3 +231,18 @@ as `object_bounds()`.
 
 Mirrors of the [Inputs package](inputs.md) plus `mouse_delta_x()` /
 `mouse_delta_y()` and `hide_cursor()` / `show_cursor()` for mouse-look.
+# Skyboxes
+
+Load a 4×3 cross-layout cubemap once, then draw it first inside the 3D pass:
+
+```mako
+skybox = Mako3D.create_skybox("Images/Skybox.png");
+
+Mako3D.begin_3d(camera);
+Mako3D.draw_skybox(skybox);
+# Draw the rest of the scene here.
+Mako3D.end_3d();
+```
+
+Skybox paths resolve relative to the running script. A missing image uses a
+small fallback sky instead of crashing.

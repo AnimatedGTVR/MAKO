@@ -227,6 +227,30 @@ static class MakoRay2D
         Raylib.DrawRectangleRounded(new Rectangle(x, y, w, h), r, s, a.Count > 6 ? MakoRay.ToColor(a[6]) : Color.White);
         return null;
     }
+    /// rect_rot(center_x, center_y, width, height, rotation_degrees, color)
+    public static object? RectRot(List<object?> a)
+    {
+        float x = (float)Convert.ToDouble(a[0]); float y = (float)Convert.ToDouble(a[1]);
+        float w = (float)Convert.ToDouble(a[2]); float h = (float)Convert.ToDouble(a[3]);
+        float rotation = a.Count > 4 ? (float)Convert.ToDouble(a[4]) : 0;
+        var color = a.Count > 5 ? MakoRay.ToColor(a[5]) : Color.White;
+        Raylib.DrawRectanglePro(new Rectangle(x, y, w, h), new Vector2(w / 2, h / 2), rotation, color);
+        return null;
+    }
+    public static object? RectRotLines(List<object?> a)
+    {
+        float x = (float)Convert.ToDouble(a[0]); float y = (float)Convert.ToDouble(a[1]);
+        float w = (float)Convert.ToDouble(a[2]); float h = (float)Convert.ToDouble(a[3]);
+        float radians = (a.Count > 4 ? (float)Convert.ToDouble(a[4]) : 0) * MathF.PI / 180f;
+        var color = a.Count > 5 ? MakoRay.ToColor(a[5]) : Color.White;
+        float c = MathF.Cos(radians), s = MathF.Sin(radians);
+        Vector2 RotateCorner(float px, float py) => new(x + px * c - py * s, y + px * s + py * c);
+        var p0 = RotateCorner(-w / 2, -h / 2); var p1 = RotateCorner(w / 2, -h / 2);
+        var p2 = RotateCorner(w / 2, h / 2); var p3 = RotateCorner(-w / 2, h / 2);
+        Raylib.DrawLineV(p0, p1, color); Raylib.DrawLineV(p1, p2, color);
+        Raylib.DrawLineV(p2, p3, color); Raylib.DrawLineV(p3, p0, color);
+        return null;
+    }
     public static object? Circle(List<object?> a)
     {
         int x = (int)Convert.ToDouble(a[0]); int y = (int)Convert.ToDouble(a[1]);
@@ -342,7 +366,8 @@ static class MakoRay2D
         ["sprite"]       = Sprite,       ["sprite_frame"] = SpriteFrame,
         ["sprite_rot"]   = SpriteRot,
         ["rect"]         = Rect,         ["rect_lines"]   = RectLines,
-        ["rect_round"]   = RectRound,    ["circle"]       = Circle,
+        ["rect_round"]   = RectRound,    ["rect_rot"]     = RectRot,
+        ["rect_rot_lines"] = RectRotLines, ["circle"]     = Circle,
         ["circle_lines"] = CircleLines,  ["line"]         = Line,
         ["triangle"]     = Triangle,
         ["key_down"]     = KeyDown,      ["key_pressed"]  = KeyPressed,

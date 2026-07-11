@@ -34,6 +34,7 @@ static class MakoRay3D
     private static readonly List<Camera3D> _cameras = [];
     private static readonly List<Model>    _models  = [];
     private static readonly List<Texture2D>_textures= [];
+    private static readonly List<RenderTexture2D?> _previews = [];
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -189,6 +190,29 @@ static class MakoRay3D
         return new List<object?> { (object?)(double)p.X, (double)p.Y, (double)p.Z };
     }
 
+    /// mouse_ray(cam, [screen_x, screen_y]) → [ox, oy, oz, dx, dy, dz], the
+    /// world-space ray from the camera through the given screen point
+    /// (defaults to the current mouse position) — the standard way to turn
+    /// "where the mouse is pointing" into a 3D aim direction, e.g. for
+    /// click-to-shoot. Direction is unit-length.
+    public static object? MouseRay(List<object?> a)
+    {
+        int camId = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : 0;
+        if (camId < 0 || camId >= _cameras.Count)
+            return new List<object?> { 0d, 0d, 0d, 0d, 0d, -1d };
+
+        var screenPos = a.Count > 2
+            ? new Vector2((float)Convert.ToDouble(a[1]), (float)Convert.ToDouble(a[2]))
+            : Raylib.GetMousePosition();
+
+        var ray = Raylib.GetScreenToWorldRay(screenPos, _cameras[camId]);
+        return new List<object?>
+        {
+            (double)ray.Position.X, (double)ray.Position.Y, (double)ray.Position.Z,
+            (double)ray.Direction.X, (double)ray.Direction.Y, (double)ray.Direction.Z,
+        };
+    }
+
     public static object? Begin3D(List<object?> a)
     {
         int id = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : 0;
@@ -197,6 +221,84 @@ static class MakoRay3D
     }
 
     public static object? End3D(List<object?> _) { Raylib.EndMode3D(); return null; }
+
+    // ── Off-screen 3D previews ───────────────────────────────────────────────
+    //
+    // A "preview" is a small render target with its own camera — the
+    // standard trick for a rotating item-preview panel (inventory slots,
+    // spawn pickers, etc.) that shows a real live 3D render of an object
+    // instead of a flat icon or a plain button. Draw whatever you want with
+    // the normal cube()/sphere()/etc. calls between begin_preview/end_preview
+    // (with its own camera), then blit the result onto the main frame with
+    // draw_preview() like any other 2D image.
+
+    /// create_preview(width, height) → handle. Allocates an off-screen
+    /// render target of the given pixel size.
+    public static object? CreatePreview(List<object?> a)
+    {
+        int w = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : 200;
+        int h = a.Count > 1 ? (int)Convert.ToDouble(a[1]) : 200;
+        _previews.Add(Raylib.LoadRenderTexture(w, h));
+        return (object?)(double)(_previews.Count - 1);
+    }
+
+    /// begin_preview(handle, cam, [bg_color]) — everything drawn between this
+    /// and end_preview() goes into the preview's off-screen texture, using
+    /// `cam` as the 3D camera (a normal Mako3D.camera() handle — often a
+    /// small camera orbiting just the one object being previewed).
+    public static object? BeginPreview(List<object?> a)
+    {
+        int id = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : 0;
+        int camId = a.Count > 1 ? (int)Convert.ToDouble(a[1]) : 0;
+        if (id < 0 || id >= _previews.Count || _previews[id] is not { } rt) return null;
+        if (camId < 0 || camId >= _cameras.Count) return null;
+        var bg = a.Count > 2 ? MakoRay.ToColor(a[2]) : Color.Black;
+        Raylib.BeginTextureMode(rt);
+        Raylib.ClearBackground(bg);
+        Raylib.BeginMode3D(_cameras[camId]);
+        return null;
+    }
+
+    public static object? EndPreview(List<object?> _)
+    {
+        Raylib.EndMode3D();
+        Raylib.EndTextureMode();
+        return null;
+    }
+
+    /// draw_preview(handle, x, y, [w, h]) — blits the preview's rendered
+    /// image onto the main frame at screen position (x, y), optionally
+    /// scaled to (w, h). Call this between Mako3D.begin()/end() like any
+    /// other 2D draw, after end_preview() has produced this frame's content.
+    /// Render textures are Y-flipped internally (a raylib/OpenGL quirk, not
+    /// a Mako3D bug) — that flip is handled here so callers never see it.
+    public static object? DrawPreview(List<object?> a)
+    {
+        int id = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : 0;
+        if (id < 0 || id >= _previews.Count || _previews[id] is not { } rt) return null;
+        float x = a.Count > 1 ? (float)Convert.ToDouble(a[1]) : 0;
+        float y = a.Count > 2 ? (float)Convert.ToDouble(a[2]) : 0;
+        float w = a.Count > 3 ? (float)Convert.ToDouble(a[3]) : rt.Texture.Width;
+        float h = a.Count > 4 ? (float)Convert.ToDouble(a[4]) : rt.Texture.Height;
+        var src = new Rectangle(0, 0, rt.Texture.Width, -rt.Texture.Height);
+        var dst = new Rectangle(x, y, w, h);
+        Raylib.DrawTexturePro(rt.Texture, src, dst, Vector2.Zero, 0, Color.White);
+        return null;
+    }
+
+    internal static uint? PreviewTextureId(int id) =>
+        id >= 0 && id < _previews.Count && _previews[id] is { } rt ? rt.Texture.Id : null;
+
+    public static object? RemovePreview(List<object?> a)
+    {
+        int id = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : 0;
+        if (id >= 0 && id < _previews.Count && _previews[id] is { } rt)
+        {
+            Raylib.UnloadRenderTexture(rt);
+            _previews[id] = null;
+        }
+        return null;
+    }
 
     // ── 3D Primitives ─────────────────────────────────────────────────────────
 
@@ -222,6 +324,154 @@ static class MakoRay3D
         float d = (float)Convert.ToDouble(a[5]);
         Raylib.DrawCube(pos, w, h, d, a.Count > 6 ? MakoRay.ToColor(a[6]) : Color.White);
         return null;
+    }
+
+    /// cube_rot(x,y,z, w,h,d, pitch,yaw,roll, color) — an oriented cube.
+    /// pitch/yaw/roll are degrees, applied yaw then pitch then roll to match
+    /// Physics3D.body_info()'s convention. Prefer cube_rot_q for anything
+    /// that tumbles continuously (see cube_rot_q's doc comment) — this
+    /// Euler-angle version can visibly snap/pop a frame when the angles
+    /// cross their wraparound point, which is a property of Euler angles
+    /// themselves, not a bug in the draw call.
+    public static object? DrawCubeRot(List<object?> a)
+    {
+        var pos    = Vec3(a, 0);
+        float w    = a.Count > 3 ? (float)Convert.ToDouble(a[3]) : 1;
+        float h    = a.Count > 4 ? (float)Convert.ToDouble(a[4]) : 1;
+        float d    = a.Count > 5 ? (float)Convert.ToDouble(a[5]) : 1;
+        float pitch= a.Count > 6 ? (float)Convert.ToDouble(a[6]) : 0;
+        float yaw  = a.Count > 7 ? (float)Convert.ToDouble(a[7]) : 0;
+        float roll = a.Count > 8 ? (float)Convert.ToDouble(a[8]) : 0;
+        var col    = a.Count > 9 ? MakoRay.ToColor(a[9]) : Color.Red;
+
+        Rlgl.PushMatrix();
+        Rlgl.Translatef(pos.X, pos.Y, pos.Z);
+        Rlgl.Rotatef(yaw, 0, 1, 0);
+        Rlgl.Rotatef(pitch, 1, 0, 0);
+        Rlgl.Rotatef(roll, 0, 0, 1);
+        Raylib.DrawCube(Vector3.Zero, w, h, d, col);
+        Raylib.DrawCubeWires(Vector3.Zero, w, h, d, Color.Black);
+        Rlgl.PopMatrix();
+        return null;
+    }
+
+    /// cube_rot_q(x,y,z, w,h,d, qx,qy,qz,qw, color) — an oriented cube driven
+    /// directly by a quaternion (Physics3D.body_info()'s qx/qy/qz/qw fields),
+    /// with no Euler-angle round trip. This is the version to use for any
+    /// object that tumbles continuously (rolling balls, toppling boxes) —
+    /// cube_rot (pitch/yaw/roll) re-derives Euler angles from the same
+    /// quaternion every frame, and Euler extraction has an inherent
+    /// wraparound discontinuity that can make a continuously-spinning object
+    /// visibly snap 180+ degrees in a single frame. The quaternion has no
+    /// such discontinuity, so this never glitches regardless of how the body
+    /// spins.
+    public static object? DrawCubeRotQ(List<object?> a)
+    {
+        var pos = Vec3(a, 0);
+        float w = a.Count > 3 ? (float)Convert.ToDouble(a[3]) : 1;
+        float h = a.Count > 4 ? (float)Convert.ToDouble(a[4]) : 1;
+        float d = a.Count > 5 ? (float)Convert.ToDouble(a[5]) : 1;
+        var q = Quat(a, 6);
+        var col = a.Count > 10 ? MakoRay.ToColor(a[10]) : Color.Red;
+
+        DrawWithQuaternion(pos, q, () =>
+        {
+            Raylib.DrawCube(Vector3.Zero, w, h, d, col);
+            Raylib.DrawCubeWires(Vector3.Zero, w, h, d, Color.Black);
+        });
+        return null;
+    }
+
+    /// sphere_rot_q(x,y,z, radius, qx,qy,qz,qw, color) — a sphere with
+    /// visible spin: a plain sphere mesh looks identical at every
+    /// orientation, so rotation is invisible unless something breaks the
+    /// symmetry. This draws the sphere plus two contrasting wire rings
+    /// (aligned to the local X and Z axes) that rotate with the body, so
+    /// rolling/spinning is actually visible instead of a smooth ball just
+    /// silently sliding.
+    public static object? DrawSphereRotQ(List<object?> a)
+    {
+        var pos = Vec3(a, 0);
+        float r = a.Count > 3 ? (float)Convert.ToDouble(a[3]) : 1;
+        var q = Quat(a, 4);
+        var col = a.Count > 8 ? MakoRay.ToColor(a[8]) : Color.Blue;
+
+        Raylib.DrawSphere(pos, r, col);
+        DrawWithQuaternion(pos, q, () =>
+        {
+            // DrawCircle3D draws a single-pixel-wide ring, which disappears
+            // at normal play distance — stack a few concentric rings just
+            // outside the sphere surface to fake enough line thickness to
+            // actually be visible from a few meters away.
+            for (int i = 0; i < 3; i++)
+            {
+                float rr = r * (1.01f + i * 0.01f);
+                Raylib.DrawCircle3D(Vector3.Zero, rr, Vector3.UnitX, 0, Color.Black);
+                Raylib.DrawCircle3D(Vector3.Zero, rr, Vector3.UnitZ, 0, Color.Black);
+            }
+        });
+        return null;
+    }
+
+    /// capsule(x,y,z, radius, height, qx,qy,qz,qw, color) — Physics3D's
+    /// capsule shape (a cylinder with two hemispherical caps, long axis
+    /// along local Y before rotation), drawn from a quaternion. Mako3D had
+    /// no capsule primitive before — capsule bodies previously had nothing
+    /// to render with. `height` is the total capsule length including both
+    /// caps, matching Physics3D.capsule()'s own height parameter.
+    public static object? DrawCapsuleRotQ(List<object?> a)
+    {
+        var pos = Vec3(a, 0);
+        float radius = a.Count > 3 ? (float)Convert.ToDouble(a[3]) : 0.5f;
+        float height = a.Count > 4 ? (float)Convert.ToDouble(a[4]) : 2f;
+        var q = Quat(a, 5);
+        var col = a.Count > 9 ? MakoRay.ToColor(a[9]) : Color.Green;
+        float cylinderHeight = MathF.Max(0, height - radius * 2f);
+        float half = cylinderHeight * 0.5f;
+
+        DrawWithQuaternion(pos, q, () =>
+        {
+            var top = new Vector3(0, half, 0);
+            var bottom = new Vector3(0, -half, 0);
+            Raylib.DrawCylinder(bottom, radius, radius, cylinderHeight, 16, col);
+            Raylib.DrawCylinderWires(bottom, radius, radius, cylinderHeight, 16, Color.Black);
+            Raylib.DrawSphere(top, radius, col);
+            Raylib.DrawSphere(bottom, radius, col);
+        });
+        return null;
+    }
+
+    /// Pushes a translate+quaternion-rotate transform, runs `draw` in that
+    /// local frame (so callers just draw at the origin), then pops it —
+    /// shared by every *_rot_q draw call so there's exactly one place that
+    /// turns a quaternion into an rlgl transform.
+    ///
+    /// Uses Translatef + axis/angle Rotatef (same primitives DrawCubeRot
+    /// already uses successfully for Euler angles), NOT PushMatrix +
+    /// MultMatrixf with a raw quaternion-derived matrix. The matrix-multiply
+    /// version composed the object's transform directly onto whatever was
+    /// already active on the stack (the camera's view matrix, inside
+    /// BeginMode3D) instead of correctly building translate-then-rotate
+    /// relative to it — every rotated cube/sphere ended up collapsed toward
+    /// the same position instead of each sitting at its own world
+    /// coordinates. Translatef/Rotatef are raylib's own primitives for
+    /// exactly this composition and don't have that failure mode.
+    private static void DrawWithQuaternion(Vector3 pos, Quaternion q, Action draw)
+    {
+        q = Quaternion.Normalize(q);
+        // Standard quaternion -> axis/angle extraction: for q = (sin(a/2)*axis, cos(a/2)),
+        // angle = 2*acos(w), axis = xyz / sin(a/2) (identity rotation, xyz ~ 0, if w ~ +-1).
+        float angleRad = 2f * MathF.Acos(Math.Clamp(q.W, -1f, 1f));
+        float sinHalf = MathF.Sqrt(Math.Max(0f, 1f - q.W * q.W));
+        var axis = sinHalf > 0.0001f ? new Vector3(q.X, q.Y, q.Z) / sinHalf : Vector3.UnitY;
+        float angleDeg = angleRad * (180f / MathF.PI);
+
+        Rlgl.PushMatrix();
+        Rlgl.Translatef(pos.X, pos.Y, pos.Z);
+        if (sinHalf > 0.0001f)
+            Rlgl.Rotatef(angleDeg, axis.X, axis.Y, axis.Z);
+        draw();
+        Rlgl.PopMatrix();
     }
 
     /// wire_cube(x,y,z, w,h,d, color) — outline only, no filled faces.
@@ -266,6 +516,29 @@ static class MakoRay3D
         var col   = a.Count > 6 ? MakoRay.ToColor(a[6]) : Color.Green;
         Raylib.DrawCylinder(pos, rt, rb, h, 16, col);
         Raylib.DrawCylinderWires(pos, rt, rb, h, 16, Color.Black);
+        return null;
+    }
+
+    /// cylinder_rot_q(x,y,z, radius_top, radius_bottom, height, qx,qy,qz,qw, color)
+    /// — an oriented cylinder driven by a quaternion, same pattern as
+    /// cube_rot_q/sphere_rot_q. raylib's DrawCylinder draws upward from its
+    /// given position along +Y, so the base sits at the transform's local
+    /// origin — matches how DrawCapsuleRotQ positions its own cylinder core.
+    public static object? DrawCylinderRotQ(List<object?> a)
+    {
+        var pos = Vec3(a, 0);
+        float rt = a.Count > 3 ? (float)Convert.ToDouble(a[3]) : 1;
+        float rb = a.Count > 4 ? (float)Convert.ToDouble(a[4]) : 1;
+        float h  = a.Count > 5 ? (float)Convert.ToDouble(a[5]) : 2;
+        var q = Quat(a, 6);
+        var col = a.Count > 10 ? MakoRay.ToColor(a[10]) : Color.Green;
+
+        DrawWithQuaternion(pos, q, () =>
+        {
+            var bottom = new Vector3(0, -h * 0.5f, 0);
+            Raylib.DrawCylinder(bottom, rt, rb, h, 16, col);
+            Raylib.DrawCylinderWires(bottom, rt, rb, h, 16, Color.Black);
+        });
         return null;
     }
 
@@ -346,6 +619,113 @@ static class MakoRay3D
     public static object? Clear(List<object?> a)
     {
         Raylib.ClearBackground(MakoRay.ToColor(a.Count > 0 ? a[0] : null));
+        return null;
+    }
+
+    // ── Skybox ────────────────────────────────────────────────────────────────
+    //
+    // A real textured skybox: loads a cross-layout cubemap image (6 faces
+    // arranged in a 4x3 unfolded-cube cross, the same layout raylib's own
+    // skybox examples use) and maps it onto a large inverted sphere with a
+    // dedicated cubemap-sampling shader — an actual texture + shader
+    // pipeline, not the flat single-color fill Mako3D.sky() does.
+
+    private static readonly List<(Model Model, Shader Shader, Texture2D Cubemap)?> _skyboxes = [];
+
+    private const string SkyboxVs = """
+        #version 330
+        in vec3 vertexPosition;
+        uniform mat4 matProjection;
+        uniform mat4 matView;
+        out vec3 fragPosition;
+        void main() {
+            fragPosition = vertexPosition;
+            mat4 rotView = mat4(mat3(matView));
+            vec4 clipPos = matProjection * rotView * vec4(vertexPosition, 1.0);
+            gl_Position = clipPos.xyww;
+        }
+        """;
+
+    // Cubemap-sampling skybox fragment shader — samples the loaded cubemap
+    // directly along the interpolated direction vector.
+    private const string SkyboxFs = """
+        #version 330
+        in vec3 fragPosition;
+        uniform samplerCube environmentMap;
+        out vec4 finalColor;
+        void main() {
+            vec3 color = texture(environmentMap, fragPosition).rgb;
+            finalColor = vec4(color, 1.0);
+        }
+        """;
+
+    /// create_skybox(image_path) → handle. `image_path` is a cross-layout
+    /// cubemap image (4 columns x 3 rows of square faces, e.g. a
+    /// 4096x3072 PNG) — a one-time load done once at scene start, not per
+    /// frame. Falls back to a small procedural gradient if the path can't
+    /// be loaded, so a missing/bad asset degrades instead of crashing.
+    public static object? CreateSkybox(List<object?> a)
+    {
+        string path = MakoAssets.Resolve(a.Count > 0 ? a[0]?.ToString() ?? "" : "");
+        Image image;
+        if (path.Length > 0 && Raylib.FileExists(path))
+        {
+            image = Raylib.LoadImage(path);
+        }
+        else
+        {
+            // Fallback: a small solid-color cross so a bad path still
+            // produces *a* skybox rather than failing outright.
+            image = Raylib.GenImageColor(4, 3, new Color(60, 90, 140, 255));
+        }
+
+        var cubemap = Raylib.LoadTextureCubemap(image, CubemapLayout.CrossFourByThree);
+        Raylib.UnloadImage(image);
+
+        var skyShader = Raylib.LoadShaderFromMemory(SkyboxVs, SkyboxFs);
+        // raylib's material system binds a cubemap texture via
+        // shader.locs[SHADER_LOC_MAP_CUBEMAP] specifically — LoadShader
+        // only auto-populates that slot for a shader compiled from files
+        // through the normal asset pipeline; a shader built with
+        // LoadShaderFromMemory needs it set explicitly, or
+        // SetMaterialTexture's cubemap assignment silently has nowhere to
+        // go and the shader samples an unbound/default texture (black).
+        unsafe { skyShader.Locs[(int)ShaderLocationIndex.MapCubemap] = Raylib.GetShaderLocation(skyShader, "environmentMap"); }
+
+        var sphereMesh = Raylib.GenMeshSphere(1f, 24, 24);
+        var model = Raylib.LoadModelFromMesh(sphereMesh);
+        unsafe { model.Materials[0].Shader = skyShader; }
+        Raylib.SetMaterialTexture(ref model, 0, MaterialMapIndex.Cubemap, ref cubemap);
+
+        _skyboxes.Add((model, skyShader, cubemap));
+        return (object?)(double)(_skyboxes.Count - 1);
+    }
+
+    /// draw_skybox(handle) — call once per frame, immediately after
+    /// begin_3d(), before drawing anything else. The skybox always renders
+    /// at the far clip plane behind everything (see SkyboxVs's z/w trick),
+    /// so draw order relative to other geometry doesn't otherwise matter —
+    /// but calling it first avoids wasted overdraw of scene objects that
+    /// would otherwise be behind it.
+    public static object? DrawSkybox(List<object?> a)
+    {
+        int id = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : 0;
+        if (id < 0 || id >= _skyboxes.Count || _skyboxes[id] is not { } sb) return null;
+        // raylib batches draw calls and only actually issues them to the
+        // GPU when the batch is flushed — without an explicit flush before
+        // and after these raw Rlgl state toggles, unrelated draws already
+        // queued in the same batch (or queued right after, before the next
+        // natural flush point) can execute with backface-culling/depth-mask
+        // still disabled, corrupting their rendering. This was showing up
+        // as a corrupted, noisy grid and a striped cube even though the
+        // skybox's own geometry/shader/texture were all loading correctly.
+        Rlgl.DrawRenderBatchActive();
+        Rlgl.DisableBackfaceCulling();
+        Rlgl.DisableDepthMask();
+        Raylib.DrawModel(sb.Model, Vector3.Zero, 1f, Color.White);
+        Rlgl.DrawRenderBatchActive();
+        Rlgl.EnableBackfaceCulling();
+        Rlgl.EnableDepthMask();
         return null;
     }
 
@@ -1052,8 +1432,10 @@ static class MakoRay3D
         {
             foreach (var m in _models)  Raylib.UnloadModel(m);
             foreach (var t in _textures) Raylib.UnloadTexture(t);
+            foreach (var rt in _previews) if (rt is { } r) Raylib.UnloadRenderTexture(r);
+            foreach (var sb in _skyboxes) if (sb is { } s) { Raylib.UnloadModel(s.Model); Raylib.UnloadShader(s.Shader); }
         }
-        _models.Clear(); _textures.Clear(); _cameras.Clear(); _objects.Clear();
+        _models.Clear(); _textures.Clear(); _cameras.Clear(); _objects.Clear(); _previews.Clear(); _skyboxes.Clear();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -1062,6 +1444,16 @@ static class MakoRay3D
         a.Count > off     ? (float)Convert.ToDouble(a[off])     : 0,
         a.Count > off + 1 ? (float)Convert.ToDouble(a[off + 1]) : 0,
         a.Count > off + 2 ? (float)Convert.ToDouble(a[off + 2]) : 0);
+
+    private static Quaternion Quat(List<object?> a, int off)
+    {
+        var q = new Quaternion(
+            a.Count > off     ? (float)Convert.ToDouble(a[off])     : 0,
+            a.Count > off + 1 ? (float)Convert.ToDouble(a[off + 1]) : 0,
+            a.Count > off + 2 ? (float)Convert.ToDouble(a[off + 2]) : 0,
+            a.Count > off + 3 ? (float)Convert.ToDouble(a[off + 3]) : 1);
+        return q.LengthSquared() > 0.0001f ? Quaternion.Normalize(q) : Quaternion.Identity;
+    }
 
     private static List<object?> ColorList(Color c) =>
         new() { (object?)(double)c.R, (double)c.G, (double)c.B, (double)c.A };
@@ -1087,16 +1479,23 @@ static class MakoRay3D
         ["title"]        = SetTitle,      ["draw_fps"]     = DrawFps,
         ["camera"]       = MakeCamera,    ["move_camera"]  = MoveCamera,
         ["orbit_camera"] = OrbitCamera,  ["update_camera"]= UpdateCamera,
-        ["camera_pos"]   = CameraPos,
+        ["camera_pos"]   = CameraPos,     ["mouse_ray"]    = MouseRay,
         ["begin_3d"]     = Begin3D,       ["end_3d"]       = End3D,
+        ["create_preview"] = CreatePreview, ["begin_preview"] = BeginPreview,
+        ["end_preview"]  = EndPreview,    ["draw_preview"] = DrawPreview,
+        ["remove_preview"] = RemovePreview,
         ["cube"]         = DrawCube,      ["cube_raw"]     = DrawCubeRaw,
+        ["cube_rot"]     = DrawCubeRot,   ["cube_rot_q"]   = DrawCubeRotQ,
+        ["sphere_rot_q"] = DrawSphereRotQ,["capsule"]      = DrawCapsuleRotQ,
         ["wire_cube"]    = DrawWireCube,
         ["sphere"]       = DrawSphere,    ["sphere_raw"]   = DrawSphereRaw,
         ["cylinder"]     = DrawCylinder,  ["plane"]        = DrawPlane,
+        ["cylinder_rot_q"] = DrawCylinderRotQ,
         ["grid"]         = DrawGrid,      ["line3d"]       = DrawLine3D,
         ["point3d"]      = DrawPoint3D,
         ["load_model"]   = LoadModelFile, ["draw_model"]   = DrawModelHandle,
         ["sky"]          = Sky,           ["clear"]        = Clear,
+        ["create_skybox"] = CreateSkybox, ["draw_skybox"]  = DrawSkybox,
         ["text"]         = DrawText,
         ["key_down"]     = KeyDown,       ["key_pressed"]  = KeyPressed,
         ["key_released"] = KeyReleased,

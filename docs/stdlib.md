@@ -122,3 +122,6 @@ truthy = wall.
 | `json_decode(s)` | Parse a JSON string into MAKO values (throws on malformed input) |
 
 See [Net](net.md) for HTTP requests, which return JSON-friendly responses.
+
+See [System](system.md) for directories, running other processes, and
+setting environment variables.

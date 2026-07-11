@@ -1,0 +1,123 @@
+using Physics3D;
+
+main() {
+    # Backend names are readable, and Box2D stays correctly marked as 2D-only.
+    native = Physics3D.backend("mako");
+    assert(native["installed"], "built-in MAKO physics is always installed");
+    box2d = Physics3D.backend("box2d");
+    assert(box2d["dimension"] == "2d", "Box2D belongs to Physics2D");
+
+    # Gravity + damping settle a falling box; it sleeps once velocity is low
+    # for long enough.
+    world = Physics3D.world(0, -9.81, 0, 1 / 60);
+    box = Physics3D.box(world, 0, 10, 0, 2, 2, 2, 1);
+    for i in range(600) {
+        Physics3D.step(world, 1 / 60);
+    }
+    info = Physics3D.body_info(world, box);
+    assert(info["vy"] < 0, "falling box has downward velocity before it settles");
+    # Impulses respect mass: a 60-unit impulse on mass 2 gives v = 30, and the
+    # very next fixed step moves the body by v * dt.
+    zero_g = Physics3D.world(0, 0, 0, 1 / 60);
+    mover = Physics3D.sphere(zero_g, 0, 0, 0, 1, 2);
+    Physics3D.apply_impulse(zero_g, mover, 60, 0, 0);
+    Physics3D.step(zero_g, 1 / 60);
+    mover_info = Physics3D.body_info(zero_g, mover);
+    assert(mover_info["vx"] > 29.9 and mover_info["vx"] < 30, "impulse respects mass and damping");
+    assert(abs(mover_info["x"] - 0.5) < 0.01, "impulse changes position on the next step");
+    # set_velocity / set_position wake a sleeping body and move it directly.
+    still = Physics3D.box(zero_g, 5, 5, 5, 1, 1, 1, 1);
+    Physics3D.set_position(zero_g, still, 1, 2, 3);
+    Physics3D.set_velocity(zero_g, still, 4, 5, 6);
+    still_info = Physics3D.body_info(zero_g, still);
+    assert(still_info["x"] == 1 and still_info["y"] == 2 and still_info["z"] == 3, "set_position moves a body");
+    assert(still_info["vx"] == 4 and still_info["vy"] == 5 and still_info["vz"] == 6, "set_velocity sets linear velocity");
+    # Static bodies never move, even under gravity and forces.
+    statics = Physics3D.world(0, -9.81, 0, 1 / 60);
+    floor = Physics3D.static_box(statics, 0, 0, 0, 20, 1, 20);
+    Physics3D.apply_force(statics, floor, 100, 100, 100);
+    for i in range(60) {
+        Physics3D.step(statics, 1 / 60);
+    }
+    floor_info = Physics3D.body_info(statics, floor);
+    assert(floor_info["x"] == 0 and floor_info["y"] == 0 and floor_info["z"] == 0, "static body does not move");
+    # Kinematic bodies follow velocity but ignore gravity/forces.
+    platform = Physics3D.box(statics, "kinematic", 0, 30, 0, 10, 2, 10, 1);
+    Physics3D.set_velocity(statics, platform, 12, 0, 0);
+    Physics3D.step(statics, 0.5);
+    # step() clamps a single frame to 0.25s to avoid runaway catch-up.
+    plat_info = Physics3D.body_info(statics, platform);
+    assert(abs(plat_info["x"] - 3) < 0.01, "kinematic body follows velocity, clamped to 0.25s per step");
+    assert(abs(plat_info["y"] - 30) < 0.01, "kinematic body ignores gravity");
+    # Angular state uses degrees at the script boundary, quaternions internally.
+    angular = Physics3D.world(0, 0, 0, 1 / 60);
+    spinner = Physics3D.box(angular, 0, 0, 0, 2, 2, 2, 6, 0.2, 0.4, 0, 45, 0);
+    spin_info = Physics3D.body_info(angular, spinner);
+    assert(abs(spin_info["yaw"] - 45) < 0.001, "box accepts an initial yaw");
+    # Torque spins a dynamic body about the world Y axis.
+    Physics3D.apply_torque(angular, spinner, 0, 12, 0);
+    for i in range(30) {
+        Physics3D.step(angular, 1 / 60);
+    }
+    spun_info = Physics3D.body_info(angular, spinner);
+    assert(spun_info["angular_velocity_y"] > 0, "torque about Y produces positive angular velocity");
+    # lock_rotation freezes orientation even under torque.
+    locked = Physics3D.box(angular, 5, 0, 0, 2, 2, 2, 1);
+    Physics3D.lock_rotation(angular, locked, true);
+    Physics3D.apply_torque(angular, locked, 0, 50, 0);
+    for i in range(30) {
+        Physics3D.step(angular, 1 / 60);
+    }
+    locked_info = Physics3D.body_info(angular, locked);
+    assert(locked_info["angular_velocity_y"] == 0, "lock_rotation prevents angular motion");
+    # Sleep / wake.
+    resting = Physics3D.world(0, 0, 0, 1 / 60);
+    sleeper = Physics3D.sphere(resting, 0, 0, 0, 1, 1);
+    for i in range(60) {
+        Physics3D.step(resting, 1 / 60);
+    }
+    assert(Physics3D.is_sleeping(resting, sleeper), "a body at rest with no forces falls asleep");
+    Physics3D.apply_impulse(resting, sleeper, 1, 0, 0);
+    assert(!Physics3D.is_sleeping(resting, sleeper), "an impulse wakes a sleeping body");
+    Physics3D.wake(resting, sleeper);
+    assert(!Physics3D.is_sleeping(resting, sleeper), "wake() clears the sleeping flag directly");
+    # Removal and world-clearing.
+    misc = Physics3D.world(0, 0, 0, 1 / 60);
+    a = Physics3D.box(misc, 0, 0, 0, 1, 1, 1, 1);
+    b = Physics3D.sphere(misc, 1, 1, 1, 1, 1);
+    count = Physics3D.body_count(misc);
+    Physics3D.remove_body(misc, a);
+    assert(Physics3D.body_count(misc) == count - 1, "remove_body updates the world");
+    assert(Physics3D.body_info(misc, a) == none, "removed body has no info");
+    Physics3D.clear(misc);
+    assert(Physics3D.body_count(misc) == 0, "clear removes every body");
+    # Frame-rate independence: a fixed-timestep world reaches the same state
+    # whether stepped once per big delta or many times per small delta.
+    slow = Physics3D.world(0, -9.81, 0, 1 / 60);
+    fast = Physics3D.world(0, -9.81, 0, 1 / 60);
+    Physics3D.box(slow, 0, 10, 0, 1, 1, 1, 1);
+    Physics3D.box(fast, 0, 10, 0, 1, 1, 1, 1);
+    for i in range(30) {
+        Physics3D.step(slow, 1 / 30);
+    }
+    for i in range(60) {
+        Physics3D.step(fast, 1 / 60);
+    }
+    slow_info = Physics3D.body_info(slow, 0);
+    fast_info = Physics3D.body_info(fast, 0);
+    assert(abs(slow_info["y"] - fast_info["y"]) < 0.01, "fixed timestep gives frame-rate-independent results");
+    # Easy moving-platform constructor replaces the old quoted kinematic type.
+    moving = Physics3D.world(0, -9.81, 0);
+    lift = Physics3D.moving_box(moving, 0, 2, 0, 4, 1, 4);
+    Physics3D.set_velocity(moving, lift, 0, 2, 0);
+    Physics3D.step(moving, 1 / 60);
+    lift_pos = Physics3D.position(moving, lift);
+    assert(lift_pos[1] > 2, "moving_box follows velocity without a type string");
+    # Small read APIs avoid a body_info dictionary for normal game loops.
+    lift_velocity = Physics3D.velocity(moving, lift);
+    lift_transform = Physics3D.transform(moving, lift);
+    assert(lift_velocity[1] == 2, "velocity returns a simple xyz list");
+    assert(len(lift_transform) == 7, "transform returns xyz plus quaternion rotation");
+    Physics3D.gravity(moving, 0, 0, 0);
+    print "Physics3D tests pass!";
+}

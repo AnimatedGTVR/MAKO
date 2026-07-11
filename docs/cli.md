@@ -67,6 +67,18 @@ Packages live in `~/.local/share/mko/packages/`. A package repo needs an
 In a script, `using name from "github:User/Repo";` fetches automatically on
 first run.
 
+## Foundry builds
+
+```bash
+mko foundry game.mko                  # open the MakoUI builder
+mko foundry game.mko --term           # list target readiness in the terminal
+mko build game.mko --target linux-x64 # direct/CI build
+```
+
+Foundry's first ready target produces a self-contained Linux x64 executable
+folder. See [foundry.md](foundry.md) for project manifests, artifact layout,
+and the Windows/AppImage/Android/macOS/Web/VR/console roadmap.
+
 ## Misc
 
 ```bash

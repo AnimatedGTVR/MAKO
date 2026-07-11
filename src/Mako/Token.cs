@@ -17,12 +17,12 @@ enum TokenType
     If, Else,
     While, For, In,
     Break, Continue,
-    Fn, Return,
+    Fn, Return, Struct,
     Run,
     And, Or, Not,
     Const,
     Using, Use, From,
-    Try, Catch,
+    Try, Catch, Throw,
     Arrow,   // =>
 
     // Operators

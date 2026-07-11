@@ -5,31 +5,41 @@
 
 MAKO blends the readability of Python, the simplicity of Lua, and the structure of C-style languages. Write a script, run it with `mko`, and you have windows, 2D/3D graphics, synthesized sound, input, UI, and early game logic tools — no project files, no build step, no asset pipeline required.
 
-> **Status:** v0.03 alpha — dicts, lambdas, try/catch, formatter, REPL, packages, and native packages: **MakoUI**, **Mako2D**, **Mako3D**, **Inputs**, and **Audio**.
+> **Status:** v0.1.0 — the first official release. Structs & methods, dicts, lambdas, try/catch, formatter, REPL, type hints, `mko check`, a versioned package manager, and native packages: **MakoUI**, **Mako2D**, **Mako3D**, **Inputs**, **Audio**, **Net**, and **System**. Builds ship for Linux, Windows, macOS, and the web (WebAssembly, language-only).
 >
-> MAKO is still experimental. Syntax, APIs, packages, and examples may change before the first official release, **v0.1.0**.
+> MAKO is still young — syntax, APIs, and examples may still change — but it's no longer pre-release.
+
+> **Design rule:** If something is hard to type, it is hard to understand.
+> MAKO keeps advanced machinery available underneath, but its normal APIs must
+> make the common path short, readable, and obvious.
 
 ---
 
 ## Screenshots
 
 <p align="center">
-  <img src="Images/screenshot-2026-07-08_02-16-27.png" alt="Mako3D demo" width="45%">
-  <img src="Images/screenshot-2026-07-08_02-16-59.png" alt="MakoUI demo" width="45%">
+  <img src="Images/image.png" alt="MAKO Foundry game builder" width="92%">
 </p>
 
 <p align="center">
-  <img src="Images/screenshot-2026-07-08_02-17-26.png" alt="Mako3D shapes and lighting" width="45%">
-  <img src="Images/screenshot-2026-07-08_02-17-34.png" alt="Mako2D rendering demo" width="45%">
+  <strong>Foundry — build games without exposing the toolchain.</strong>
 </p>
 
 <p align="center">
-  <img src="Images/screenshot-2026-07-08_02-17-54.png" alt="Mako3D arena demo" width="45%">
-  <img src="Images/screenshot-2026-07-08_02-18-14.png" alt="MAKO game demo" width="45%">
+  <img src="Images/image%20copy.png" alt="MAKO Physics2D soft-body slime and command log" width="45%">
+  <img src="Images/image%20copy%202.png" alt="MAKO Physics3D rigid-body playground" width="45%">
 </p>
 
 <p align="center">
-  <img src="Images/screenshot-2026-07-08_02-18-34.png" alt="MAKO audio or UI demo" width="70%">
+  <img src="Images/image%20copy%204.png" alt="MAKO Physics3D sandbox with embedded MakoUI controls" width="70%">
+</p>
+
+<p align="center">
+  <img src="Images/image%20copy%206.png" alt="A readable Pong game written in MAKO" width="52%">
+</p>
+
+<p align="center">
+  <img src="Images/image%20copy%205.png" alt="mko check reporting that a MAKO script has no issues" width="60%">
 </p>
 
 ---
@@ -116,6 +126,7 @@ All examples install globally. Run these from any directory:
 | `mko pong.mko`         | Pong vs an AI paddle — synth sound and positional audio                  |
 | `mko snake.mko`        | Snake — speeds up as you grow with pitch-shifting eat sound              |
 | `mko gem_hunter.mko`   | 3D arena collector — camera follow, patrol enemies, and audio navigation |
+| `mko slime_platformer.mko` | Googly-eyed Physics2D platformer prototype — squishy movement, collectibles, pits, platforms, and a goal |
 | `mko monster_maze.mko` | Stealth game — monster AI with vision cone, hearing, and A* pathfinding  |
 | `mko music_maker.mko`  | Playable synth piano — 5 waveforms and melody baking                     |
 | `mko settings.mko`     | FPS overlay, graph, audio sliders, and FPS cap selector                  |
@@ -193,6 +204,8 @@ mko: error (line 4): function 'greeet' wasn't found
 | `mko repl`                                  | Interactive REPL                        |
 | `mko test [dir]`                            | Run every `*.mko` file under `tests/` as a regression suite |
 | `mko fmt <file>` / `mko fmt <file> --check` | Format source while preserving comments |
+| `mko foundry [project]`                     | Open the MakoUI game builder |
+| `mko build [project] --target linux-x64`    | Export a self-contained game |
 | `mko get <pkg> [github:User/Repo]`          | Install a package                       |
 | `mko list`                                  | List installed packages                 |
 | `mko cache clear`                           | Clear the package cache                 |
@@ -203,6 +216,13 @@ Packages can come from GitHub:
 using mylib from "github:User/Repo";
 ```
 
+### Foundry
+
+Foundry turns a MAKO game into a distributable application through a MakoUI
+frontend or the same backend from the CLI. Linux portable exports work now;
+Windows `.exe`, AppImage, APK, macOS, Web, VR, and console adapters share the
+same target model and will arrive incrementally. See [Foundry](docs/foundry.md).
+
 ---
 
 ## Native packages
@@ -211,9 +231,12 @@ using mylib from "github:User/Repo";
 | --------------- | ------------------------------------------------------------------------------------ |
 | `using Mako2D;` | 2D games: sprites, spritesheets, Camera2D, shapes, text                              |
 | `using Mako3D;` | 3D games: Camera3D, fly/orbit controls, cubes, spheres, models, grid — plus a spawn/draw_scene() object system so you stop hand-redrawing static geometry every frame |
+| `using Physics2D;` | Easy slimes plus advanced rigid bodies, oriented collision, stable stacks, adaptive substeps, sleeping, torque, contacts, and springs |
+| `using Physics3D;` | Easy 3D bodies and characters, primitive collision, rotation, friction, sleeping, and adaptive fast-body substeps |
 | `using Inputs;` | Unified input: keyboard, mouse, cursor lock, gamepad                                 |
 | `using Audio;`  | Sound files, synthesizer, music streaming, 2D/3D positional sound, 8-voice polyphony |
 | `using Net;`    | HTTP requests (GET/POST/PUT/DELETE) + JSON encode/decode                            |
+| `using System;` | Directories, running other processes, environment variables — for scripting and small build/tooling tasks |
 | `using MakoUI;` | Desktop UIs via Dear ImGui: windows, menus, tables, modals, tabs, themes — standalone window or embedded live in a Mako3D/Mako2D scene |
 
 Game-dev builtins are available without an import:
@@ -447,6 +470,7 @@ MAKO is not trying to replace large engines like Modularity. The goal is to make
 * [CLI](docs/cli.md) — every `mko` command
 * [Mako2D](docs/mako2d.md)
 * [Mako3D](docs/mako3d.md)
+* [Physics3D](docs/physics3d.md)
 * [Inputs](docs/inputs.md)
 * [Audio](docs/audio.md)
 * [Net](docs/net.md) — HTTP requests and JSON

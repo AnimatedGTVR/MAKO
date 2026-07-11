@@ -1,0 +1,67 @@
+using Physics3D;
+
+main() {
+    # Named layers are readable. Either body may ignore the other's layer.
+    layers = Physics3D.world(0, 0, 0);
+    player = Physics3D.sphere(layers, 0, 0, 0, 1);
+    enemy = Physics3D.static_sphere(layers, 0.5, 0, 0, 1);
+    Physics3D.layer(layers, player, "player");
+    Physics3D.layer(layers, enemy, "enemy");
+    Physics3D.ignore_layer(layers, player, "enemy");
+    Physics3D.step(layers, 1 / 60);
+    assert(!Physics3D.is_colliding(layers, player), "ignored layers do not collide");
+    Physics3D.ignore_layer(layers, player, "enemy", false);
+    Physics3D.step(layers, 1 / 60);
+    assert(Physics3D.is_colliding(layers, player), "a layer can be enabled again");
+    assert(Physics3D.body_info(layers, player)["layer"] == "player", "body info reports its layer");
+    # Triggers report overlap but never push the other body away.
+    triggers = Physics3D.world(0, 0, 0);
+    pickup = Physics3D.static_box(triggers, 0, 0, 0, 2, 2, 2);
+    Physics3D.trigger(triggers, pickup);
+    ball = Physics3D.sphere(triggers, 0, 0, 0, 0.5);
+    Physics3D.step(triggers, 1 / 60);
+    assert(Physics3D.is_triggered(triggers, pickup), "trigger notices an overlapping body");
+    assert(abs(Physics3D.position(triggers, ball)[0]) < 0.01, "trigger does not push a body");
+    # Characters pass through triggers and report their handles.
+    character_world = Physics3D.world(0, 0, 0);
+    zone = Physics3D.static_box(character_world, 0, 1, 0, 4, 4, 4);
+    Physics3D.trigger(character_world, zone);
+    hero = Physics3D.character(character_world, 0, 1, 0);
+    Physics3D.step(character_world, 1 / 60);
+    hero_info = Physics3D.character_info(character_world, hero);
+    found_zone = false;
+    for id in hero_info["triggers"] {
+        if id == zone {
+            found_zone = true;
+        }
+    }
+    assert(found_zone, "character info reports touched triggers");
+    assert(Physics3D.is_triggered(character_world, zone), "trigger notices a character");
+    # Queries can ask for only one named layer.
+    query = Physics3D.world(0, 0, 0);
+    red = Physics3D.static_sphere(query, 2, 0, 0, 0.5);
+    blue = Physics3D.static_sphere(query, 4, 0, 0, 0.5);
+    Physics3D.layer(query, red, "red");
+    Physics3D.layer(query, blue, "blue");
+    hit = Physics3D.raycast(query, 0, 0, 0, 1, 0, 0, 10, "blue");
+    assert(hit["body"] == blue, "raycast can filter by a named layer");
+    nearby = Physics3D.overlap_sphere(query, 0, 0, 0, 10, "red");
+    assert(len(nearby) == 1 and nearby[0] == red, "overlap query can filter by a named layer");
+    # A 3D spring pulls a stretched body toward its resting length.
+    springs = Physics3D.world(0, 0, 0);
+    anchor = Physics3D.static_sphere(springs, 0, 0, 0, 0.25);
+    weight = Physics3D.sphere(springs, 5, 0, 0, 0.5);
+    joint = Physics3D.spring(springs, anchor, weight, 2, 60, 8);
+    before = Physics3D.spring_info(springs, joint)["length"];
+    for i in range(30) {
+        Physics3D.step(springs, 1 / 60);
+    }
+    after = Physics3D.spring_info(springs, joint)["length"];
+    assert(after < before, "spring pulls a stretched body inward");
+    assert(Physics3D.spring_count(springs) == 1, "spring_count reports live springs");
+    Physics3D.set_spring(springs, joint, 3, 40, 5);
+    assert(Physics3D.spring_info(springs, joint)["rest"] == 3, "set_spring retunes a joint");
+    Physics3D.remove_spring(springs, joint);
+    assert(Physics3D.spring_count(springs) == 0, "remove_spring removes a joint");
+    print "Physics3D gameplay tests pass!";
+}

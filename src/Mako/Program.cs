@@ -19,7 +19,7 @@ if (args.Length == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "
 
 if (args[0] == "version" || args[0] == "--version" || args[0] == "-v")
 {
-    Console.WriteLine("MAKO 0.03");
+    Console.WriteLine("MAKO 0.1.0");
     return 0;
 }
 
@@ -119,6 +119,46 @@ if (args[0] == "fmt")
     return 0;
 }
 
+if (args[0] == "check")
+{
+    if (args.Length < 2)
+    {
+        Console.Error.WriteLine("Usage: mko check <file.mko>");
+        return 1;
+    }
+
+    string checkPath = args[1];
+    if (!File.Exists(checkPath))
+    {
+        Console.Error.WriteLine($"mko: file not found: {checkPath}");
+        return 1;
+    }
+
+    string checkSource;
+    try { checkSource = File.ReadAllText(checkPath); }
+    catch (Exception ex) { Console.Error.WriteLine($"mko: could not read: {ex.Message}"); return 1; }
+
+    List<CheckIssue> issues;
+    try
+    {
+        var tokens  = new Lexer(checkSource).Tokenize();
+        var program = new Parser(tokens).Parse();
+        issues = Checker.Check(program);
+    }
+    catch (MakoError ex) { ReportError(ex, checkSource); return 1; }
+
+    if (issues.Count == 0)
+    {
+        Console.WriteLine($"{checkPath}: no issues found");
+        return 0;
+    }
+
+    foreach (var issue in issues.OrderBy(i => i.Line))
+        Console.WriteLine($"{checkPath}:{issue.Line}: {issue.Message}");
+    Console.WriteLine($"{issues.Count} issue{(issues.Count == 1 ? "" : "s")} found");
+    return 1;
+}
+
 if (args[0] == "repl")
 {
     RunRepl();
@@ -188,16 +228,78 @@ if (args[0] == "test")
     return failed == 0 ? 0 : 1;
 }
 
+if (args[0] == "foundry")
+{
+    string projectArg = args.Where(a => !a.StartsWith('-')).Skip(1).FirstOrDefault() ?? ".";
+    bool termOnly = args.Contains("--term");
+    try
+    {
+        var project = Foundry.LoadProject(projectArg);
+        if (termOnly)
+        {
+            Console.WriteLine($"MAKO Foundry — {project.Name} {project.Version}");
+            Console.WriteLine($"Entry:  {project.EntryPath}");
+            Console.WriteLine($"Output: {project.OutputPath}");
+            Console.WriteLine();
+            Console.WriteLine("Targets:");
+            foreach (var target in Foundry.Targets)
+                Console.WriteLine($"  {target.Id,-14} {target.Status,-8} {target.Name} ({target.Artifact})");
+            Console.WriteLine();
+            Console.WriteLine("Build with: mko build <project> --target linux-x64");
+            return 0;
+        }
+        FoundryGui.Run(projectArg);
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"mko foundry: {ex.Message}");
+        return 1;
+    }
+}
+
+if (args[0] == "build")
+{
+    string projectArg = ".";
+    string? targetArg = null;
+    string? outputArg = null;
+    for (int i = 1; i < args.Length; i++)
+    {
+        if (args[i] == "--target" && i + 1 < args.Length) { targetArg = args[++i]; continue; }
+        if (args[i] == "--output" && i + 1 < args.Length) { outputArg = args[++i]; continue; }
+        if (!args[i].StartsWith('-')) projectArg = args[i];
+    }
+    try
+    {
+        var project = Foundry.LoadProject(projectArg);
+        if (outputArg != null) project.Output = Path.GetFullPath(outputArg);
+        string target = targetArg ?? project.DefaultTarget;
+        var result = Foundry.Build(project, target, Console.WriteLine);
+        if (!result.Success)
+        {
+            Console.Error.WriteLine($"mko build: {result.Message}");
+            return 1;
+        }
+        Console.WriteLine($"Artifact: {result.ArtifactPath}");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"mko build: {ex.Message}");
+        return 1;
+    }
+}
+
 if (args[0] == "get")
 {
     if (args.Length < 2)
     {
-        Console.Error.WriteLine("Usage: mko get <package>  [or]  mko get <package> <github:User/Repo>");
+        Console.Error.WriteLine("Usage: mko get <package>  [or]  mko get <package> <github:User/Repo[@ref]>");
         return 1;
     }
     var pkgName = args[1];
     if (args.Length >= 3)
-        PackageManager.Register(pkgName, PackageManager.ResolveUrl(args[2]));
+        PackageManager.Register(pkgName, args[2]); // raw source, "@ref" (if any) split at clone time
     try
     {
         PackageManager.Ensure(pkgName);
@@ -211,6 +313,35 @@ if (args[0] == "get")
     }
 }
 
+if (args[0] == "update")
+{
+    var targets = args.Length >= 2
+        ? new[] { args[1] }
+        : PackageManager.ListInstalled().Select(p => p.Name).ToArray();
+
+    if (targets.Length == 0)
+    {
+        Console.WriteLine("mko: no packages installed.");
+        return 0;
+    }
+
+    bool anyFailed = false;
+    foreach (var name in targets)
+    {
+        try
+        {
+            PackageManager.Update(name);
+            Console.WriteLine($"mko: '{name}' updated.");
+        }
+        catch (MakoError ex)
+        {
+            Console.Error.WriteLine($"mko: {ex.RawMessage}");
+            anyFailed = true;
+        }
+    }
+    return anyFailed ? 1 : 0;
+}
+
 if (args[0] == "list")
 {
     var pkgs = PackageManager.ListInstalled().ToList();
@@ -222,7 +353,15 @@ if (args[0] == "list")
     {
         Console.WriteLine("Installed packages:");
         foreach (var (name, path) in pkgs)
-            Console.WriteLine($"  {name}  ({path})");
+        {
+            var locked = PackageManager.GetLockEntry(name);
+            string suffix = locked != null
+                ? locked.Ref != null
+                    ? $"  @{locked.Ref} ({locked.ResolvedCommit[..Math.Min(8, locked.ResolvedCommit.Length)]})"
+                    : $"  ({locked.ResolvedCommit[..Math.Min(8, locked.ResolvedCommit.Length)]})"
+                : "";
+            Console.WriteLine($"  {name}{suffix}  ({path})");
+        }
     }
     return 0;
 }
@@ -316,7 +455,7 @@ return 1;
 
 static void RunRepl()
 {
-    Console.WriteLine("MAKO 0.03 REPL  (Ctrl+C or 'exit' to quit)");
+    Console.WriteLine("MAKO 0.1.0 REPL  (Ctrl+C or 'exit' to quit)");
     Console.WriteLine();
 
     var interpreter = new Interpreter();
@@ -337,15 +476,27 @@ static void RunRepl()
 
         history.Add(trimmed);
 
-        // Wrap bare expressions so we can print their value, but allow
-        // statements (print, if, while, fn, etc.) to pass through.
-        // Strategy: try parsing as a full script; if that fails, try wrapping.
-        var source = WrapForRepl(trimmed);
+        // 'fn Name(...)'/'struct Name {...}' declarations must reach the
+        // parser unwrapped — they're only valid at top level, never inside a
+        // main() body — so they parse and register into the interpreter's
+        // persistent _funcs/_structs, visible on every later line, same as a
+        // real REPL session. 'fn(x) => ...' lambdas are expressions, not
+        // declarations (no name before the '('), so they still go through
+        // the wrap path below along with everything else (print, if, while,
+        // assignments, ...). Tokenizing first (rather than checking string
+        // prefixes) means the real lexer decides what's a keyword — no risk
+        // of a variable named e.g. "fnord" being misread as an "fn" decl.
+        var lineTokens = new Lexer(trimmed).Tokenize();
+        bool isTopLevelDecl =
+            (lineTokens.Count > 0 && lineTokens[0].Type == TokenType.Struct) ||
+            (lineTokens.Count > 2 && lineTokens[0].Type == TokenType.Fn
+                                   && lineTokens[1].Type == TokenType.Identifier);
+        var source = isTopLevelDecl ? trimmed : WrapForRepl(trimmed);
 
         try
         {
-            var tokens  = new Lexer(source).Tokenize();
-            var program = new Parser(tokens).Parse();
+            var tokens  = isTopLevelDecl ? lineTokens : new Lexer(source).Tokenize();
+            var program = new Parser(tokens, interpreter.KnownStructNames).Parse();
             interpreter.ExecuteRepl(program);
         }
         catch (MakoError ex)
@@ -367,6 +518,7 @@ static string WrapForRepl(string line)
     // Otherwise wrap in main() so the interpreter can evaluate it.
     return $"main() {{ {line}{(line.TrimEnd().EndsWith(';') ? "" : ";")} }}";
 }
+
 
 static void ReportReplError(MakoError ex, string userLine, string wrapped)
 {
@@ -542,16 +694,25 @@ static void PrintPackageInfo(RegistryEntry e)
 static void PrintHelp()
 {
     Console.WriteLine("""
-    MAKO 0.03 — a simple, sharp programming language
+    MAKO 0.1.0 — a simple, sharp programming language
 
     Usage:
       mko run <file.mko>            Run a MAKO script
       mko fmt <file.mko>            Format a MAKO file in-place
       mko fmt <file.mko> --check   Check if a file is formatted
+      mko check <file.mko>          Lint a file (unused vars, unreachable code, bad type hints)
       mko repl                      Start interactive REPL
       mko test [dir]                 Run *.mko files under tests/ (or [dir])
-      mko get <pkg> [github:U/R]    Install a package
-      mko list                      List installed packages
+      mko foundry [project]          Open the MakoUI game builder
+      mko foundry [project] --term   Show Foundry project and target status
+      mko build [project]            Build with the project's Foundry target
+        --target linux-x64           Override the target
+        --output <dir>               Override the output directory
+      mko get <pkg> [github:U/R[@ref]]  Install a package, optionally pinned to a
+                                     tag, branch, or commit
+      mko update [pkg]              Re-fetch a package (or all of them) to
+                                     whatever its pin/branch currently points at
+      mko list                      List installed packages, with pin/commit
       mko cache clear [pkg]         Remove cached package(s)
       mko search [query] [--term]   Browse/search known packages (opens a GUI window;
                                      --term prints plain text instead)
@@ -594,6 +755,7 @@ static void PrintHelp()
       using MakoUI;                          desktop UI (Dear ImGui) — also usable
                                               standalone as "MakoGUI" (no game loop)
       using Mako2D; / using Mako3D;          2D / 3D game rendering
+      using Physics2D;                       2D rigid bodies and collision
       using Inputs; / using Audio;           input, sound + synth
       using Net;                             HTTP requests + JSON
       using mylib from "github:User/Repo";   fetch from GitHub

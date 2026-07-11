@@ -1,0 +1,156 @@
+using Mako2D;
+using Physics2D;
+using Inputs;
+using MakoUI;
+
+main() {
+    Mako2D.init(900, 600, "MAKO Physics2D");
+    Mako2D.fps(60);
+    MakoUI.attach();
+    MakoUI.theme_dark();
+    world = Physics2D.world(0, 900);
+    floor = Physics2D.box(world, "static", 450, 570, 860, 30, 1, 0.1, 0.8);
+    left = Physics2D.box(world, "static", 20, 300, 30, 570);
+    right = Physics2D.box(world, "static", 880, 300, 30, 570);
+    ramp = Physics2D.box(world, "static", 220, 465, 280, 18, 1, 0.1, 0.8, -12);
+    ledge1 = Physics2D.box(world, "static", 430, 430, 135, 18, 1, 0.05, 0.9);
+    ledge2 = Physics2D.box(world, "static", 555, 335, 120, 18, 1, 0.05, 0.9);
+    ledge3 = Physics2D.box(world, "static", 745, 245, 150, 18, 1, 0.05, 0.9);
+    bodies = [floor, left, right, ramp, ledge1, ledge2, ledge3];
+    push(bodies, Physics2D.box(world, "dynamic", 430, 120, 55, 55, 2, 0.15, 0.7));
+    push(bodies, Physics2D.box(world, "dynamic", 480, 55, 70, 35, 1, 0.3, 0.5));
+    push(bodies, Physics2D.circle(world, "dynamic", 350, 40, 24, 1, 0.75, 0.3));
+    push(bodies, Physics2D.circle(world, "dynamic", 550, 20, 32, 3, 0.4, 0.5));
+    # A deliberately crooked tower exercises oriented-box SAT and angular response.
+    for i in range(7) {
+        push(bodies, Physics2D.box(world, "dynamic", 650, 520 - i * 48, 76, 38, 2, 0.05, 0.75, i * 4 - 12));
+    }
+    # All particle and spring topology is hidden behind one easy call.
+    slime = Physics2D.slime(world, 300, 220, 55, {"squish": 0.72, "friction": 0.9});
+    command_log = ["Physics2D ready", "Slime controller attached", "Type 'help' for commands"];
+    command_text = "";
+    command_move = 0;
+    was_grounded = false;
+    while Mako2D.running() {
+        if Inputs.mouse_pressed("left") and !MakoUI.wants_mouse() {
+            ball = Physics2D.circle(world, "dynamic", Inputs.mouse_x(), Inputs.mouse_y(), 18, 1, 0.65, 0.4);
+            Physics2D.apply_impulse(world, ball, random_int(-180, 180), -250);
+            push(bodies, ball);
+            push(command_log, "Launched ball #{ball}");
+        }
+        move = command_move;
+        if !MakoUI.wants_keyboard() {
+            if Inputs.key_down("LEFT") or Inputs.key_down("A") {
+                move = move - 1;
+            }
+            if Inputs.key_down("RIGHT") or Inputs.key_down("D") {
+                move = move + 1;
+            }
+        }
+        move = clamp(move, -1, 1);
+        Physics2D.slime_move(world, slime, move);
+        if Inputs.key_pressed("SPACE") and !MakoUI.wants_keyboard() {
+            if Physics2D.slime_jump(world, slime) {
+                push(command_log, "Jump");
+            }
+        }
+        Physics2D.slime_hold_jump(world, slime, Inputs.key_down("SPACE") and !MakoUI.wants_keyboard());
+        Physics2D.step(world, Mako2D.delta());
+        slime_info = Physics2D.slime_info(world, slime);
+        if slime_info["grounded"] and !was_grounded {
+            push(command_log, "Landed at " + round(slime_info["x"]) + ", " + round(slime_info["y"]));
+        }
+        was_grounded = slime_info["grounded"];
+        if len(command_log) > 8 {
+            command_log = slice(command_log, len(command_log) - 8, len(command_log));
+        }
+        Mako2D.begin();
+        Mako2D.clear(Mako2D.color(14, 20, 30));
+        Mako2D.text("A/D move  SPACE jump  CLICK launch ball", 24, 20, 24, Mako2D.RAYWHITE);
+        points = slime_info["points"];
+        for i in range(len(points)) {
+            next = (i + 1) % len(points);
+            Mako2D.triangle(slime_info["x"], slime_info["y"], points[next][0], points[next][1], points[i][0], points[i][1], Mako2D.fade(Mako2D.LIME, 0.65));
+            Mako2D.line(points[i][0], points[i][1], points[next][0], points[next][1], Mako2D.WHITE);
+            Mako2D.circle(points[i][0], points[i][1], slime_info["particle_radius"], Mako2D.LIME);
+        }
+        # Extremely important physics instrumentation: googly eyes.
+        eye_radius = clamp(slime_info["radius"] * 0.18, 7, 13);
+        eye_gap = slime_info["width"] * 0.14;
+        eye_y = slime_info["y"] - slime_info["height"] * 0.12;
+        pupil_x = clamp(slime_info["vx"] / 80, -eye_radius * 0.35, eye_radius * 0.35);
+        pupil_y = clamp(slime_info["vy"] / 100, -eye_radius * 0.35, eye_radius * 0.35);
+        Mako2D.circle(slime_info["x"] - eye_gap, eye_y, eye_radius, Mako2D.WHITE);
+        Mako2D.circle(slime_info["x"] + eye_gap, eye_y, eye_radius, Mako2D.WHITE);
+        Mako2D.circle_lines(slime_info["x"] - eye_gap, eye_y, eye_radius, Mako2D.BLACK);
+        Mako2D.circle_lines(slime_info["x"] + eye_gap, eye_y, eye_radius, Mako2D.BLACK);
+        Mako2D.circle(slime_info["x"] - eye_gap + pupil_x, eye_y + pupil_y, eye_radius * 0.42, Mako2D.BLACK);
+        Mako2D.circle(slime_info["x"] + eye_gap + pupil_x, eye_y + pupil_y, eye_radius * 0.42, Mako2D.BLACK);
+        for body in bodies {
+            info = Physics2D.body_info(world, body);
+            if info != none {
+                color = Mako2D.SKYBLUE;
+                if info["type"] == "static" {
+                    color = Mako2D.DARKGRAY;
+                }
+                if info["colliding"] {
+                    color = Mako2D.GOLD;
+                }
+                if info["shape"] == "circle" {
+                    Mako2D.circle(info["x"], info["y"], info["radius"], color);
+                    Mako2D.circle_lines(info["x"], info["y"], info["radius"], Mako2D.WHITE);
+                } else {
+                    Mako2D.rect_rot(info["x"], info["y"], info["width"], info["height"], info["rotation"], color);
+                    Mako2D.rect_rot_lines(info["x"], info["y"], info["width"], info["height"], info["rotation"], Mako2D.WHITE);
+                }
+            }
+        }
+        Mako2D.draw_fps(810, 20);
+        MakoUI.begin();
+        MakoUI.set_window_pos(14, 54);
+        MakoUI.set_window_size(330, 205);
+        MakoUI.begin_window("Command Log");
+        for entry in command_log {
+            MakoUI.text(entry);
+        }
+        MakoUI.separator();
+        command_text = MakoUI.input_text("##command", command_text);
+        MakoUI.same_line();
+        if MakoUI.button("Run") {
+            cmd = lower(trim(command_text));
+            if cmd == "clear" {
+                command_log = [];
+            } else if cmd == "help" {
+                push(command_log, "Commands: jump, left, right, stop, status, clear");
+            } else {
+                if cmd == "jump" {
+                    push(command_log, "> jump");
+                    if !Physics2D.slime_jump(world, slime) {
+                        push(command_log, "Jump buffered");
+                    }
+                } else if cmd == "left" {
+                    command_move = -1;
+                    push(command_log, "> moving left");
+                } else {
+                    if cmd == "right" {
+                        command_move = 1;
+                        push(command_log, "> moving right");
+                    } else if cmd == "stop" {
+                        command_move = 0;
+                        push(command_log, "> stopped");
+                    } else {
+                        if cmd == "status" {
+                            push(command_log, "pos " + round(slime_info["x"]) + ", " + round(slime_info["y"]) + "  grounded=" + slime_info["grounded"]);
+                        } else if cmd != "" {
+                            push(command_log, "Unknown command: {cmd}");
+                        }
+                    }
+                }
+            }
+            command_text = "";
+        }
+        MakoUI.end_window();
+        MakoUI.end();
+        Mako2D.end();
+    }
+}

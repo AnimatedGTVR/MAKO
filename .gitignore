@@ -9,6 +9,8 @@ obj/
 # Publish output
 publish/
 out/
+dist/
+*.building/
 
 # OS junk
 .DS_Store

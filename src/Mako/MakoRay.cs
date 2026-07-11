@@ -27,6 +27,13 @@ static class MakoRay
 {
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    /// Used only by Interpreter.Execute's cleanup path — kept as thin
+    /// pass-throughs (rather than Interpreter calling Raylib_cs directly)
+    /// so the web build's MakoRay stub can satisfy the same call sites
+    /// without pulling in a native-only namespace.
+    public static bool IsWindowReady() => Raylib.IsWindowReady();
+    public static void CloseWindow() => Raylib.CloseWindow();
+
     public static object? Init(List<object?> args)
     {
         int w     = args.Count > 0 ? (int)Convert.ToDouble(args[0]) : 800;

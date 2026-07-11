@@ -1,0 +1,72 @@
+@namespace Mako.Web
+@using System.Text
+@inject HttpClient Http
+
+<main>
+    <div class="mw-toolbar">
+        <button @onclick="RunScript">Run</button>
+        <span class="mw-status">@StatusText</span>
+    </div>
+    <div class="mw-panes">
+        <textarea @bind="Source" @bind:event="oninput" spellcheck="false"></textarea>
+        <pre class="@(HasError ? "error" : "")">@Output</pre>
+    </div>
+</main>
+
+@code {
+    // Loaded from wwwroot/game.mko at startup when present — this is how
+    // a Foundry-built web export ships its own game script without
+    // needing a C# rebuild per project (see Foundry.cs's BuildWebBundle,
+    // which drops the target project's entry script in as game.mko after
+    // publish). Falls back to DefaultScript.Text (a demo script exercising
+    // the parts of MAKO that work in this build) when no game.mko exists,
+    // e.g. during local development straight out of `dotnet run`.
+    private string Source = DefaultScript.Text;
+
+    private string Output = "Press Run.";
+    private bool HasError;
+    private string StatusText = "language core + Physics2D/Physics3D — WebAssembly";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var gameScript = await Http.GetStringAsync("game.mko");
+            if (!string.IsNullOrWhiteSpace(gameScript))
+                Source = gameScript;
+        }
+        catch
+        {
+            // No game.mko shipped (e.g. dev mode) — keep the default demo script.
+        }
+    }
+
+    private void RunScript()
+    {
+        var buffer = new StringBuilder();
+        var writer = new StringWriter(buffer);
+        var previousOut = Console.Out;
+        Console.SetOut(writer);
+        HasError = false;
+        try
+        {
+            var interp = new Interpreter();
+            interp.Run(Source);
+            Output = buffer.Length > 0 ? buffer.ToString() : "(no output)";
+        }
+        catch (MakoError ex)
+        {
+            HasError = true;
+            Output = buffer + $"\nmko: error: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            HasError = true;
+            Output = buffer + $"\nunexpected error: {ex}";
+        }
+        finally
+        {
+            Console.SetOut(previousOut);
+        }
+    }
+}

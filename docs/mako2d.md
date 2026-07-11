@@ -53,6 +53,8 @@ Colors are `[r, g, b, a]` lists — you can build them by hand.
 | `rect(x, y, w, h, color)` | Filled rectangle |
 | `rect_lines(x, y, w, h, color)` | Outline |
 | `rect_round(x, y, w, h, roundness, segments, color)` | Rounded rectangle |
+| `rect_rot(cx, cy, w, h, rotation, color)` | Filled rectangle rotated around its center |
+| `rect_rot_lines(cx, cy, w, h, rotation, color)` | Outline of a center-anchored rotated rectangle |
 | `circle(x, y, r, color)` / `circle_lines(...)` | Circle |
 | `line(x1, y1, x2, y2, color)` | Line |
 | `triangle(x1,y1, x2,y2, x3,y3, color)` | Filled triangle (counter-clockwise) |

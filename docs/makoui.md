@@ -271,6 +271,8 @@ if MakoUI.begin_table("data", 3) {
   check this before your own 3D picking so a click on the UI doesn't also
   select an object underneath it (`if Inputs.mouse_pressed("left") and not
   MakoUI.wants_mouse() { selected = Mako3D.pick_object(cam); }`)
+- `wants_keyboard()` — true while a MakoUI text field or widget owns keyboard
+  input; pause game movement shortcuts while the player types into a panel
 - Themes: `theme_dark()` · `theme_light()` · `theme_mako()` (cherry blossom)
 - Fine styling: `push_color(idx, r, g, b, a)` / `pop_color(n)` ·
   `push_var(idx, value)` / `pop_var(n)`
@@ -278,3 +280,22 @@ if MakoUI.begin_table("data", 3) {
 See `examples/ui_demo.mko` for the standalone-window widget tour, and
 `examples/embedded_ui_demo.mko` for the embedded toolbar-over-a-3D-scene
 pattern (tabs, FPS counter, live scene controls).
+# Embedded 3D previews
+
+Use a Mako3D render preview as a real clipped MakoUI widget:
+
+```mako
+preview = Mako3D.create_preview(256, 256);
+
+# Render the preview scene first, then place it inside a MakoUI window.
+Mako3D.begin_preview(preview, preview_camera, Mako3D.BLACK);
+Mako3D.sphere(0, 0, 0, 1, Mako3D.PINK);
+Mako3D.end_preview();
+
+MakoUI.begin_window("Spawn");
+MakoUI.preview(preview, 256, 200);
+MakoUI.end_window();
+```
+
+`preview(handle, width=220, height=220)` participates in ImGui layout and
+clipping, so it cannot draw outside its window or cover later controls.

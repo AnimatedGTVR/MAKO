@@ -1,0 +1,158 @@
+using Physics3D;
+
+main() {
+    # Sphere-sphere: a sphere approaching head-on bounces off contact.
+    world = Physics3D.world(0, 0, 0, 1 / 60);
+    a = Physics3D.sphere(world, -1.9, 0, 0, 1, 1);
+    b = Physics3D.static_sphere(world, 0, 0, 0, 1);
+    Physics3D.set_velocity(world, a, 60, 0, 0);
+    Physics3D.step(world, 1 / 60);
+    assert(Physics3D.is_colliding(world, a), "sphere-sphere collision is detected");
+    assert(Physics3D.body_info(world, a)["vx"] < 60, "sphere-sphere impact slows the approaching sphere");
+    # Fast projectiles automatically receive enough substeps to hit thin
+    # geometry instead of clipping from one side to the other.
+    fast = Physics3D.world(0, 0, 0);
+    wall = Physics3D.static_box(fast, 2, 0, 0, 0.1, 4, 4);
+    shot = Physics3D.sphere(fast, 0, 0, 0, 0.25);
+    Physics3D.set_velocity(fast, shot, 300, 0, 0);
+    Physics3D.step(fast, 1 / 60);
+    assert(Physics3D.body_info(fast, shot)["x"] < 2.5, "fast sphere cannot tunnel through a thin wall");
+    # Capsule-box uses the whole capsule segment, not a few sampled points.
+    # This thin box lies between the old sample locations and was previously missed.
+    exact_capsule = Physics3D.world(0, 0, 0);
+    long_cap = Physics3D.capsule(exact_capsule, 0, 0, 0, 0.2, 10);
+    Physics3D.lock_rotation(exact_capsule, long_cap);
+    Physics3D.static_box(exact_capsule, 0, 0.8, 0, 1, 0.1, 1);
+    Physics3D.step(exact_capsule, 1 / 60);
+    assert(Physics3D.is_colliding(exact_capsule, long_cap), "capsule detects thin boxes anywhere along its segment");
+    # A sideways capsule collides at its far rounded end. Treating the whole
+    # shape as one sphere at its center would miss this contact completely.
+    sideways = Physics3D.world(0, 0, 0);
+    side_cap = Physics3D.capsule(sideways, 0, 0, 0, 0.5, 6);
+    Physics3D.set_rotation(sideways, side_cap, 0, 0, 90);
+    Physics3D.static_sphere(sideways, 2.9, 0, 0, 0.5);
+    Physics3D.step(sideways, 1 / 60);
+    assert(Physics3D.is_colliding(sideways, side_cap), "rotated capsule collides along its full length, not as a center sphere");
+    # A sideways capsule needs two floor contacts so it rests flat instead of
+    # pivoting and sinking around one rounded end.
+    capsule_rest = Physics3D.world(0, -9.81, 0);
+    Physics3D.floor(capsule_rest);
+    resting_cap = Physics3D.capsule(capsule_rest, 0, 5, 0, 0.5, 3);
+    Physics3D.set_rotation(capsule_rest, resting_cap, 0, 0, 90);
+    for i in range(600) {
+        Physics3D.step(capsule_rest, 1 / 60);
+    }
+    resting_info = Physics3D.body_info(capsule_rest, resting_cap);
+    assert(abs(resting_info["y"] - 0.5) < 0.08, "sideways capsule rests one radius above the floor");
+    assert(Physics3D.is_sleeping(capsule_rest, resting_cap), "flat capsule settles without endless rocking");
+    # Game queries return every body touched by a simple sphere-shaped area.
+    query = Physics3D.world(0, 0, 0);
+    near = Physics3D.static_box(query, 0, 0, 0, 1, 1, 1);
+    far = Physics3D.static_box(query, 20, 0, 0, 1, 1, 1);
+    hits = Physics3D.overlap_sphere(query, 0, 0, 0, 2);
+    found_near = false;
+    found_far = false;
+    for hit in hits {
+        if hit == near {
+            found_near = true;
+        }
+        if hit == far {
+            found_far = true;
+        }
+    }
+    assert(found_near, "overlap_sphere finds nearby bodies");
+    assert(!found_far, "overlap_sphere ignores distant bodies");
+    # Raycasts return the nearest body, hit point, distance, and surface normal.
+    rays = Physics3D.world(0, 0, 0);
+    ray_box = Physics3D.static_box(rays, 5, 0, 0, 2, 2, 2);
+    Physics3D.static_sphere(rays, 10, 0, 0, 1);
+    hit = Physics3D.raycast(rays, 0, 0, 0, 1, 0, 0, 20);
+    assert(hit["body"] == ray_box, "raycast returns the nearest body");
+    assert(abs(hit["distance"] - 4) < 0.01, "raycast reports distance to the surface");
+    assert(hit["nx"] < -0.9, "raycast reports the hit face normal");
+    miss = Physics3D.raycast(rays, 0, 0, 0, -1, 0, 0, 20);
+    assert(miss == none, "raycast returns none when nothing is hit");
+    # Sphere-plane: a falling sphere rests on a ground plane at y=0.
+    grounded = Physics3D.world(0, -9.81, 0, 1 / 60);
+    floor = Physics3D.floor(grounded);
+    ball = Physics3D.sphere(grounded, 0, 5, 0, 1, 1);
+    for i in range(300) {
+        Physics3D.step(grounded, 1 / 60);
+    }
+    ball_info = Physics3D.body_info(grounded, ball);
+    assert(abs(ball_info["y"] - 1) < 0.05, "sphere rests on the plane at y = radius");
+    assert(Physics3D.is_grounded(grounded, ball), "resting sphere reports grounded");
+    assert(Physics3D.is_sleeping(grounded, ball), "settled sphere sleeps");
+    # Sphere-box: a sphere falling onto a box top face settles at box_top + radius.
+    boxed = Physics3D.world(0, -9.81, 0, 1 / 60);
+    platform = Physics3D.static_box(boxed, 0, 0, 0, 10, 2, 10);
+    dropped = Physics3D.sphere(boxed, 0, 6, 0, 1, 1);
+    for i in range(300) {
+        Physics3D.step(boxed, 1 / 60);
+    }
+    dropped_info = Physics3D.body_info(boxed, dropped);
+    assert(abs(dropped_info["y"] - 2) < 0.05, "sphere rests on top of the box (box half-height 1 + radius 1)");
+    # Box-plane: a falling box settles flat with its bottom face on the plane.
+    boxground = Physics3D.world(0, -9.81, 0, 1 / 60);
+    ground2 = Physics3D.floor(boxground);
+    crate = Physics3D.box(boxground, 0, 5, 0, 2, 2, 2, 1);
+    for i in range(300) {
+        Physics3D.step(boxground, 1 / 60);
+    }
+    crate_info = Physics3D.body_info(boxground, crate);
+    assert(abs(crate_info["y"] - 1) < 0.05, "box rests on the plane at y = half-height");
+    assert(Physics3D.is_grounded(boxground, crate), "resting box reports grounded");
+    # Box-box: a falling box lands on a static box below it (simple stack).
+    stack = Physics3D.world(0, -9.81, 0, 1 / 60);
+    baseBox = Physics3D.static_box(stack, 0, 0, 0, 4, 2, 4);
+    topBox = Physics3D.box(stack, 0, 5, 0, 2, 2, 2, 1);
+    for i in range(300) {
+        Physics3D.step(stack, 1 / 60);
+    }
+    top_info = Physics3D.body_info(stack, topBox);
+    assert(abs(top_info["y"] - 2) < 0.1, "box settles on top of another box (1 + 1 half-heights)");
+    assert(Physics3D.is_colliding(stack, topBox), "box-box contact is reported");
+    # Capsule-plane: a capsule dropped onto a floor rests upright.
+    capworld = Physics3D.world(0, -9.81, 0, 1 / 60);
+    capfloor = Physics3D.floor(capworld);
+    cap = Physics3D.capsule(capworld, 0, 5, 0, 0.5, 2, 1);
+    for i in range(300) {
+        Physics3D.step(capworld, 1 / 60);
+    }
+    cap_info = Physics3D.body_info(capworld, cap);
+    # Capsule half-height (excluding caps) is (2 - 2*0.5)/2 = 0.5; resting
+    # bottom-cap-center is at halfHeight, so surface touches at halfHeight - radius = 0.
+    # body position y should settle around halfHeight + radius = 1 (bottom sphere cap touches floor).
+    assert(cap_info["y"] > 0.4 and cap_info["y"] < 1.1, "capsule rests above the floor");
+    # Capsule-box: a capsule dropped onto a box settles on top.
+    capbox = Physics3D.world(0, -9.81, 0, 1 / 60);
+    capplat = Physics3D.static_box(capbox, 0, 0, 0, 6, 2, 6);
+    capdrop = Physics3D.capsule(capbox, 0, 6, 0, 0.5, 2, 1);
+    for i in range(300) {
+        Physics3D.step(capbox, 1 / 60);
+    }
+    capdrop_info = Physics3D.body_info(capbox, capdrop);
+    assert(capdrop_info["y"] > 1.4, "capsule rests on top of the box, above the box's top face");
+    # Acceptance demo shape: a small pile of boxes and spheres on a floor
+    # settles (bounded positions, low velocities) without exploding.
+    pile = Physics3D.world(0, -9.81, 0, 1 / 60);
+    Physics3D.floor(pile);
+    Physics3D.box(pile, 0, 1, 0, 1, 1, 1, 1);
+    Physics3D.box(pile, 0.3, 3, 0.1, 1, 1, 1, 1);
+    Physics3D.box(pile, -0.2, 5, 0, 1, 1, 1, 1);
+    Physics3D.sphere(pile, 2, 2, 0, 0.5, 1);
+    Physics3D.sphere(pile, 2.1, 4, 0.2, 0.5, 1);
+    for i in range(600) {
+        Physics3D.step(pile, 1 / 60);
+    }
+    count = Physics3D.body_count(pile);
+    for id in range(6) {
+        info = Physics3D.body_info(pile, id);
+        if info == none {
+            continue;
+        }
+        assert(abs(info["x"]) < 20 and abs(info["y"]) < 20 and abs(info["z"]) < 20, "pile body stays within a sane bound (no explosion)");
+        assert(info["y"] > -1, "pile body does not fall through the floor");
+    }
+    print "Physics3D collision tests pass!";
+}
