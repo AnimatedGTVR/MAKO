@@ -1,0 +1,33 @@
+using ModuMAKO;
+using ModuEngine;
+using ModuInput;
+
+# A complete v7 character controller. Modularity owns input and physics;
+# ModuMAKO owns the gameplay script and its persistent per-object state.
+
+script "ModuMakoCharacter" : ModuNode;
+
+_movementSettings: MovementSettings = StandaloneMovementSettings();
+_movementState: MovementState = StandaloneMovementState();
+_movementDebug: MovementDebug = StandaloneMovementDebug();
+_jumpCount = 0;
+
+Begin() {
+    EnsureRigidbody(true, false);
+    EnsureCapsuleCollider(1.8, 0.4);
+    AddLog("ModuMAKO character ready", Type.Success);
+}
+
+TickUpdate(dt) {
+    TickStandaloneMovement(
+        _movementState,
+        _movementSettings,
+        dt,
+        _movementDebug
+    );
+
+    if Input.ButtonDown("Jump") {
+        _jumpCount = _jumpCount + 1;
+        AddLog("jump={_jumpCount}", Type.Info);
+    }
+}

@@ -23,6 +23,43 @@ if (args[0] == "version" || args[0] == "--version" || args[0] == "-v")
     return 0;
 }
 
+if (args[0] == "modumako")
+{
+    if (args.Length < 2)
+    {
+        Console.Error.WriteLine("Usage: mko modumako <file.modumako> [-o output.moducpp]");
+        return 1;
+    }
+    string inputPath = args[1];
+    if (!File.Exists(inputPath))
+    {
+        Console.Error.WriteLine($"mko: file not found: {inputPath}");
+        return 1;
+    }
+    try
+    {
+        string generated = ModuMakoCompiler.Compile(File.ReadAllText(inputPath), inputPath);
+        int outputIndex = Array.IndexOf(args, "-o");
+        if (outputIndex >= 0)
+        {
+            if (outputIndex + 1 >= args.Length)
+            {
+                Console.Error.WriteLine("mko modumako: -o requires an output path");
+                return 1;
+            }
+            File.WriteAllText(args[outputIndex + 1], generated);
+            Console.WriteLine($"emitted ModuCPP: {args[outputIndex + 1]}");
+        }
+        else Console.Write(generated);
+        return 0;
+    }
+    catch (MakoError ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 1;
+    }
+}
+
 // Shorthand: `mko script.mko` or `mko ./script.mko` — no 'run' needed.
 // Also handles shebang invocation: `#!/usr/bin/env mko`
 if (args[0].EndsWith(".mko", StringComparison.OrdinalIgnoreCase) || File.Exists(args[0]))
@@ -421,6 +458,35 @@ if (args[0] == "test")
             new Interpreter().Execute(formattedProg, baseDir);
 
             Console.WriteLine($"PASS  {rel}");
+            passed++;
+        }
+        catch (MakoError ex)
+        {
+            var where = ex.Line > 0 ? $" (line {ex.Line})" : "";
+            Console.WriteLine($"FAIL  {rel}: {ex.RawMessage}{where}");
+            failed++;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"FAIL  {rel}: internal error: {ex.Message}");
+            failed++;
+        }
+    }
+
+    var moduFiles = Directory.GetFiles(testDir, "*.modumako", SearchOption.AllDirectories)
+        .OrderBy(f => f, StringComparer.Ordinal);
+    foreach (var file in moduFiles)
+    {
+        var rel = Path.GetRelativePath(".", file);
+        try
+        {
+            string generated = ModuMakoCompiler.Compile(File.ReadAllText(file), rel);
+            if (!generated.Contains(": ModuNode", StringComparison.Ordinal))
+                throw new MakoError("compiler did not emit a ModuNode class");
+            if (!generated.Contains("void Begin(", StringComparison.Ordinal) &&
+                !generated.Contains("void TickUpdate(", StringComparison.Ordinal))
+                throw new MakoError("compiler did not emit a lifecycle hook");
+            Console.WriteLine($"PASS  {rel} (ModuMAKO)");
             passed++;
         }
         catch (MakoError ex)
@@ -916,6 +982,7 @@ static void PrintHelp()
       mko fmt <file.mko>            Format a MAKO file in-place
       mko fmt <file.mko> --check   Check if a file is formatted
       mko check <file.mko>          Check static types and lint a file
+      mko modumako <file> [-o out]  Compile ModuMAKO to ModuCPP
         --kernel                    Enforce the freestanding kernel-safe subset
       mko ir <file.mko>             Print typed high-level compiler IR
       mko mir <file.mko> [--opt]    Print validated basic-block IR; optionally optimize

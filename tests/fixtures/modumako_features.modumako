@@ -1,0 +1,63 @@
+using ModuMAKO;
+using ModuEngine;
+
+script "CompilerFeatures" : ModuNode;
+
+speed = 4;
+_ticks = 0;
+_movementSettings: MovementSettings = StandaloneMovementSettings();
+_movementState: MovementState = StandaloneMovementState();
+_movementDebug: MovementDebug = StandaloneMovementDebug();
+_checkpoints: List<f32> = [1, 2.5, 4];
+_spawnWeights = [1, 0.5, 2];
+_spawnOffset = Vector3(0, 1, 0);
+_hudTint = Color(0.2, 0.7, 1, 1);
+
+fn doubled(value: f32) -> f32 {
+    return value * 2;
+}
+
+Begin() {
+    for i in range(3) {
+        _ticks = _ticks + 1;
+    }
+    for countdown in range(3, 0, -1) {
+        AddLog("tick", Type.Info);
+    }
+    for compact in range(2) { AddLog("compact", Type.Info); }
+    labels: List<str> = ["start", "finish"];
+    toggles = [true, false, true];
+    push(labels, "checkpoint");
+    labelCount: i64 = len(labels);
+    firstLabel: str = first(labels);
+    lastLabel: str = last(labels);
+    hasFinish: boolean = has(labels, "finish");
+    removedLabel: str = pop(labels);
+    for checkpoint in _checkpoints {
+        AddLog("checkpoint={checkpoint}", Type.Info);
+    }
+    for label in labels { AddLog("label={label}", Type.Info); }
+    for toggle in toggles { AddLog("toggle={toggle}", Type.Info); }
+    AddLog("labels={labelCount}", Type.Info);
+    AddLog("first={firstLabel}, last={lastLabel}, removed={removedLabel}, has={hasFinish}", Type.Info);
+}
+
+TickUpdate(dt) {
+    samples: i32 = 3;
+    enabled: boolean = true;
+    if samples < 0 { AddLog("negative", Type.Warning); }
+    else if samples == 0 { AddLog("zero", Type.Info); }
+    else { AddLog("positive", Type.Success); }
+    while samples < 3 { samples = samples + 1; }
+    TickStandaloneMovement(
+        _movementState,
+        _movementSettings,
+        dt,
+        _movementDebug
+    );
+    amount = doubled(speed) * dt;
+    AddLog("amount={amount}, samples={samples}, enabled={enabled}", Type.Info);
+    if amount > 0 and obj != none {
+        SetPosition(obj.position + Vector3(amount, 0, 0));
+    }
+}

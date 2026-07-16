@@ -1,0 +1,43 @@
+using ModuMAKO;
+using ModuEngine;
+using ModuInput;
+
+# MAKO supplies the language; Modularity supplies input, physics, and scenes.
+
+script "PlayerMovement" : ModuNode;
+
+camera: SceneObj = none;
+walkSpeed = 4;
+sprintSpeed = 7;
+acceleration = 20;
+deceleration = 25;
+groundCheckDistance = 0.1;
+jumpForce = 6.5;
+_verticalVelocity = 0;
+
+Begin() {
+    Ensure.obj;
+    Ensure.Rigidbody3D(obj);
+    Ensure.CapsuleCollider(1.8, 0.4);
+}
+
+TickUpdate() {
+    move = Input.WASDMovement();
+    direction = Movement.Direction(move, camera);
+    speed = walkSpeed;
+    if Input.ButtonHeld("Sprint") {
+        speed = sprintSpeed;
+    }
+    grounded = obj.Physics.IsGrounded(groundCheckDistance);
+    obj.Rigidbody3D.Accelerate(direction, speed, acceleration, deceleration);
+    obj.Transform.Face(direction);
+    if grounded {
+        _verticalVelocity = 0;
+        if Input.ButtonDown("Jump") {
+            _verticalVelocity = jumpForce;
+        }
+    } else {
+        _verticalVelocity = obj.Rigidbody3D.VelocityY;
+    }
+    obj.Rigidbody3D.AddVelocityY(_verticalVelocity);
+}
