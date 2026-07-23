@@ -418,6 +418,7 @@ static class Formatter
         // into "literal {brace}", which fails to parse `brace` as a variable).
         private static string Escape(string s) =>
             s.Replace("\\", "\\\\").Replace("\"", "\\\"")
+             .Replace("\n", "\\n").Replace("\t", "\\t").Replace("\r", "\\r")
              .Replace("{", "{{").Replace("}", "}}");
     }
 }

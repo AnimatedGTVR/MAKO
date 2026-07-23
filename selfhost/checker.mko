@@ -1,0 +1,816 @@
+namespace BootstrapChecker;
+
+use "runtime.mko";
+use "lexer.mko";
+use "parser.mko";
+
+# The semantic checker returns a list of diagnostic strings. AST source spans
+# will later enrich these records with line/column data without changing the
+# checking API.
+fn diagnostic(issues: list<string>, message: string) -> none {
+    push(issues, message);
+    return none;
+}
+
+fn builtin_names() -> dict<string, dynamic> {
+    names: dict<string, dynamic> = {};
+    for name in ["type", "to_num", "to_str", "assert", "exit", "abs", "floor", "ceil", "round", "sqrt", "pow", "max", "min", "range", "len", "upper", "lower", "trim", "contains", "starts_with", "ends_with", "replace", "split", "join", "slice", "push", "pop", "first", "last", "reverse", "has", "keys", "values", "get", "remove", "merge", "map", "filter", "reduce", "sort_by", "each", "any", "all", "read", "write", "append", "exists", "delete", "lines", "time", "sleep", "env", "args", "json_encode", "json_decode", "random", "random_int", "clamp", "lerp", "sign", "sin", "cos", "tan", "atan2", "pi", "dist", "dist3d", "rects_overlap", "circles_overlap", "point_in_rect"] {
+        names[name] = true;
+    }
+    return names;
+}
+
+fn builtin_type(name: string) -> string {
+    if has(BootstrapChecker.builtin_names(), name) {
+        if has({
+                "type": true,
+                "to_str": true,
+                "upper": true,
+                "lower": true,
+                "trim": true,
+                "replace": true,
+                "join": true,
+                "read": true,
+                "json_encode": true
+            }, name) {
+            return "string";
+        }
+        if has({
+                "contains": true,
+                "starts_with": true,
+                "ends_with": true,
+                "has": true,
+                "any": true,
+                "all": true,
+                "exists": true
+            }, name) {
+            return "bool";
+        }
+        if name == "split" or name == "keys" or name == "range" {
+            return "list";
+        }
+        if name == "assert" or name == "write" or name == "append" or name == "delete" or name == "sleep" or name == "exit" {
+            return "none";
+        }
+        return "number";
+    }
+    return "dynamic";
+}
+
+fn context(program: dict<string, dynamic>) -> dict<string, dynamic> {
+    checker_context: dict<string, dynamic> = {
+            "issues": [],
+            "globals": {},
+            "consts": {},
+            "functions": {},
+            "structs": {},
+            "builtins": BootstrapChecker.builtin_names()
+        };
+    for package in BootstrapParser.field(program, "packages") {
+        checker_context["globals"][BootstrapParser.field(package, "name")] = "package";
+    }
+    return checker_context;
+}
+
+fn declare(table: dict<string, dynamic>, name: string, value: dynamic, category: string, issues: list<string>) -> none {
+    if has(table, name) {
+        BootstrapChecker.diagnostic(issues, "duplicate {category} '{name}'");
+    } else {
+        table[name] = value;
+    }
+    return none;
+}
+
+fn collect_declarations(checker_context: dict<string, dynamic>, program: dict<string, dynamic>) -> none {
+    issues: list<string> = checker_context["issues"];
+    for struct_node in BootstrapParser.field(program, "structs") {
+        struct_name: string = BootstrapParser.field(struct_node, "name");
+        fields: dict<string, dynamic> = {};
+        for field_node in BootstrapParser.field(struct_node, "fields") {
+            field_name: string = BootstrapParser.field(field_node, "name");
+            field_type: dynamic = BootstrapParser.field(field_node, "type");
+            if field_type == none {
+                field_type = "dynamic";
+            }
+            BootstrapChecker.declare(fields, field_name, field_type, "field", issues);
+        }
+        BootstrapChecker.declare(checker_context["structs"], struct_name, fields, "struct", issues);
+        BootstrapChecker.declare(checker_context["globals"], struct_name, struct_name, "global", issues);
+    }
+    for function_node in BootstrapParser.field(program, "functions") {
+        function_name: string = BootstrapParser.field(function_node, "name");
+        signature: dict<string, dynamic> = {
+                "parameters": BootstrapParser.field(function_node, "parameters"),
+                "return_type": BootstrapParser.field(function_node, "return_type")
+            };
+        BootstrapChecker.declare(checker_context["functions"], function_name, signature, "function", issues);
+        BootstrapChecker.declare(checker_context["globals"], function_name, "fn", "global", issues);
+    }
+    for constant in BootstrapParser.field(program, "constants") {
+        constant_name: string = BootstrapParser.field(constant, "name");
+        BootstrapChecker.declare(checker_context["globals"], constant_name, "dynamic", "global", issues);
+        checker_context["consts"][constant_name] = true;
+    }
+    return none;
+}
+
+fn visible(checker_context: dict<string, dynamic>, locals: dict<string, dynamic>, name: string) -> bool {
+    return has(locals, name) or has(checker_context["globals"], name) or has(checker_context["builtins"], name);
+}
+
+fn resolve_expression(checker_context: dict<string, dynamic>, locals: dict<string, dynamic>, expression: dict<string, dynamic>) -> none {
+    kind: string = BootstrapParser.node_kind(expression);
+    if kind == "identifier" {
+        name: string = BootstrapParser.field(expression, "value");
+        if !BootstrapChecker.visible(checker_context, locals, name) {
+            BootstrapChecker.diagnostic(checker_context["issues"], "unresolved name '{name}'");
+        }
+        return none;
+    }
+    if kind == "binary" or kind == "logical" {
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(expression, "left"));
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(expression, "right"));
+        return none;
+    }
+    if kind == "unary" {
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(expression, "operand"));
+        return none;
+    }
+    if kind == "call" {
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(expression, "callee"));
+        for argument in BootstrapParser.field(expression, "arguments") {
+            BootstrapChecker.resolve_expression(checker_context, locals, argument);
+        }
+        return none;
+    }
+    if kind == "index" {
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(expression, "target"));
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(expression, "index"));
+        return none;
+    }
+    if kind == "field" {
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(expression, "target"));
+        return none;
+    }
+    if kind == "list" {
+        for item in BootstrapParser.field(expression, "items") {
+            BootstrapChecker.resolve_expression(checker_context, locals, item);
+        }
+        return none;
+    }
+    if kind == "dict" {
+        for entry in BootstrapParser.field(expression, "entries") {
+            BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(entry, "key"));
+            BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(entry, "value"));
+        }
+        return none;
+    }
+    if kind == "struct_literal" {
+        struct_name: string = BootstrapParser.field(expression, "name");
+        if !has(checker_context["structs"], struct_name) {
+            BootstrapChecker.diagnostic(checker_context["issues"], "unknown struct '{struct_name}'");
+        }
+        for field_value in BootstrapParser.field(expression, "fields") {
+            BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(field_value, "value"));
+        }
+        return none;
+    }
+    if kind == "lambda" {
+        lambda_locals: dict<string, dynamic> = merge({}, locals);
+        for parameter in BootstrapParser.field(expression, "parameters") {
+            lambda_locals[BootstrapParser.field(parameter, "name")] = BootstrapParser.field(parameter, "type");
+        }
+        lambda_expression: dynamic = BootstrapParser.field(expression, "expression");
+        if lambda_expression != none {
+            BootstrapChecker.resolve_expression(checker_context, lambda_locals, lambda_expression);
+        }
+        BootstrapChecker.resolve_block(checker_context, lambda_locals, BootstrapParser.field(expression, "body"));
+        return none;
+    }
+    if kind == "input" {
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(expression, "prompt"));
+        return none;
+    }
+    if kind == "template_string" {
+        for part in BootstrapParser.field(expression, "parts") {
+            if BootstrapParser.node_kind(part) == "template_expression" {
+                BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(part, "value"));
+            }
+        }
+    }
+    return none;
+}
+
+fn resolve_statement(checker_context: dict<string, dynamic>, locals: dict<string, dynamic>, statement: dict<string, dynamic>) -> none {
+    kind: string = BootstrapParser.node_kind(statement);
+    if kind == "assign" {
+        target = BootstrapParser.field(statement, "target");
+        operator: string = BootstrapParser.field(statement, "op");
+        if BootstrapParser.node_kind(target) == "identifier" {
+            name: string = BootstrapParser.field(target, "value");
+            if has(locals, "__const__" + name) or has(checker_context["consts"], name) {
+                BootstrapChecker.diagnostic(checker_context["issues"], "cannot reassign const '{name}'");
+            }
+            if operator != "=" and !BootstrapChecker.visible(checker_context, locals, name) {
+                BootstrapChecker.diagnostic(checker_context["issues"], "assignment to unresolved name '{name}'");
+            }
+            locals[name] = BootstrapParser.field(statement, "type");
+        } else {
+            BootstrapChecker.resolve_expression(checker_context, locals, target);
+        }
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(statement, "value"));
+        return none;
+    }
+    if kind == "const" {
+        name: string = BootstrapParser.field(statement, "name");
+        BootstrapChecker.declare(locals, name, "dynamic", "local", checker_context["issues"]);
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(statement, "value"));
+        locals["__const__" + name] = true;
+        return none;
+    }
+    if kind == "print" or kind == "printnl" or kind == "expression" or kind == "return" or kind == "throw" {
+        value: dynamic = BootstrapParser.field(statement, "value");
+        if value != none {
+            BootstrapChecker.resolve_expression(checker_context, locals, value);
+        }
+        return none;
+    }
+    if kind == "run" {
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(statement, "command"));
+        return none;
+    }
+    if kind == "if" {
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(statement, "condition"));
+        BootstrapChecker.resolve_block(checker_context, merge({}, locals), BootstrapParser.field(statement, "then"));
+        BootstrapChecker.resolve_block(checker_context, merge({}, locals), BootstrapParser.field(statement, "else"));
+        return none;
+    }
+    if kind == "while" {
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(statement, "condition"));
+        BootstrapChecker.resolve_block(checker_context, merge({}, locals), BootstrapParser.field(statement, "body"));
+        return none;
+    }
+    if kind == "for" {
+        BootstrapChecker.resolve_expression(checker_context, locals, BootstrapParser.field(statement, "iterable"));
+        loop_locals: dict<string, dynamic> = merge({}, locals);
+        loop_locals[BootstrapParser.field(statement, "name")] = "dynamic";
+        BootstrapChecker.resolve_block(checker_context, loop_locals, BootstrapParser.field(statement, "body"));
+        return none;
+    }
+    if kind == "try" {
+        BootstrapChecker.resolve_block(checker_context, merge({}, locals), BootstrapParser.field(statement, "body"));
+        catch_locals: dict<string, dynamic> = merge({}, locals);
+        catch_name: dynamic = BootstrapParser.field(statement, "catch_name");
+        if catch_name != none {
+            catch_locals[catch_name] = "string";
+        }
+        BootstrapChecker.resolve_block(checker_context, catch_locals, BootstrapParser.field(statement, "catch_body"));
+    }
+    return none;
+}
+
+fn resolve_block(checker_context: dict<string, dynamic>, locals: dict<string, dynamic>, statements: list<dynamic>) -> none {
+    for statement in statements {
+        BootstrapChecker.resolve_statement(checker_context, locals, statement);
+    }
+    return none;
+}
+
+fn resolve(checker_context: dict<string, dynamic>, program: dict<string, dynamic>) -> none {
+    global_locals: dict<string, dynamic> = {};
+    for constant in BootstrapParser.field(program, "constants") {
+        BootstrapChecker.resolve_statement(checker_context, global_locals, constant);
+        checker_context["globals"][BootstrapParser.field(constant, "name")] = "dynamic";
+    }
+    for function_node in BootstrapParser.field(program, "functions") {
+        function_locals: dict<string, dynamic> = {};
+        for parameter in BootstrapParser.field(function_node, "parameters") {
+            parameter_name: string = BootstrapParser.field(parameter, "name");
+            BootstrapChecker.declare(function_locals, parameter_name, BootstrapParser.field(parameter, "type"), "parameter", checker_context["issues"]);
+        }
+        BootstrapChecker.resolve_block(checker_context, function_locals, BootstrapParser.field(function_node, "body"));
+    }
+    BootstrapChecker.resolve_block(checker_context, {}, BootstrapParser.field(program, "body"));
+    return none;
+}
+
+fn normalize_type(value: dynamic) -> string {
+    if value == none {
+        return "dynamic";
+    }
+    return value;
+}
+
+fn numeric(type_name: string) -> bool {
+    return contains(" number integer_literal float_literal i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 ", " {type_name} ");
+}
+
+fn generic_inner(type_name: string, container: string) -> string {
+    prefix: string = container + "<";
+    if !starts_with(type_name, prefix) or !ends_with(type_name, ">") {
+        return "";
+    }
+    return slice(type_name, len(prefix), len(type_name) - 1);
+}
+
+fn generic_args(type_name: string, container: string) -> list<string> {
+    inner: string = BootstrapChecker.generic_inner(type_name, container);
+    arguments: list<string> = [];
+    if inner == "" {
+        return arguments;
+    }
+    depth: number = 0;
+    start: number = 0;
+    index: number = 0;
+    while index < len(inner) {
+        character: string = inner[index];
+        if character == "<" {
+            depth = depth + 1;
+        }
+        if character == ">" {
+            depth = depth - 1;
+        }
+        if character == "," and depth == 0 {
+            push(arguments, trim(slice(inner, start, index)));
+            start = index + 1;
+        }
+        index = index + 1;
+    }
+    push(arguments, trim(slice(inner, start, len(inner))));
+    return arguments;
+}
+
+fn integer_type(type_name: string) -> bool {
+    return contains(" i8 i16 i32 i64 isize u8 u16 u32 u64 usize ", " {type_name} ");
+}
+
+fn integer_fits(type_name: string, value: number) -> bool {
+    if floor(value) != value {
+        return false;
+    }
+    if type_name == "i8" {
+        return value >= -128 and value <= 127;
+    }
+    if type_name == "u8" {
+        return value >= 0 and value <= 255;
+    }
+    if type_name == "i16" {
+        return value >= -32768 and value <= 32767;
+    }
+    if type_name == "u16" {
+        return value >= 0 and value <= 65535;
+    }
+    if type_name == "i32" {
+        return value >= -2147483648 and value <= 2147483647;
+    }
+    if type_name == "u32" {
+        return value >= 0 and value <= 4294967295;
+    }
+    if starts_with(type_name, "u") or type_name == "usize" {
+        return value >= 0;
+    }
+    return true;
+}
+
+fn assignable(expected: string, actual: string) -> bool {
+    if expected == "dynamic" or actual == "dynamic" or expected == actual {
+        return true;
+    }
+    if expected == "number" and BootstrapChecker.numeric(actual) {
+        return true;
+    }
+    if expected == "list" and starts_with(actual, "list<") {
+        return true;
+    }
+    if expected == "dict" and starts_with(actual, "dict<") {
+        return true;
+    }
+    if starts_with(expected, "list<") or starts_with(expected, "dict<") {
+        return expected == actual;
+    }
+    if BootstrapChecker.numeric(expected) and BootstrapChecker.numeric(actual) {
+        return true;
+    }
+    return false;
+}
+
+fn assignable_value(expected: string, actual: string, expression: dict<string, dynamic>) -> bool {
+    list_inner: string = BootstrapChecker.generic_inner(expected, "list");
+    if list_inner != "" and BootstrapParser.node_kind(expression) == "list" {
+        for item in BootstrapParser.field(expression, "items") {
+            item_type: string = BootstrapChecker.literal_type(item);
+            if !BootstrapChecker.assignable_value(list_inner, item_type, item) {
+                return false;
+            }
+        }
+        return true;
+    }
+    dict_args: list<string> = BootstrapChecker.generic_args(expected, "dict");
+    if len(dict_args) == 2 and BootstrapParser.node_kind(expression) == "dict" {
+        for entry in BootstrapParser.field(expression, "entries") {
+            key_expression = BootstrapParser.field(entry, "key");
+            value_expression = BootstrapParser.field(entry, "value");
+            if !BootstrapChecker.assignable_value(dict_args[0], BootstrapChecker.literal_type(key_expression), key_expression) or !BootstrapChecker.assignable_value(dict_args[1], BootstrapChecker.literal_type(value_expression), value_expression) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if BootstrapChecker.integer_type(expected) and actual == "integer_literal" and BootstrapParser.node_kind(expression) == "number" {
+        return BootstrapChecker.integer_fits(expected, BootstrapParser.field(expression, "value"));
+    }
+    return BootstrapChecker.assignable(expected, actual);
+}
+
+fn literal_type(expression: dict<string, dynamic>) -> string {
+    kind: string = BootstrapParser.node_kind(expression);
+    if kind == "number" {
+        if floor(BootstrapParser.field(expression, "value")) == BootstrapParser.field(expression, "value") {
+            return "integer_literal";
+        }
+        return "float_literal";
+    }
+    if kind == "string" or kind == "template_string" {
+        return "string";
+    }
+    if kind == "bool" {
+        return "bool";
+    }
+    if kind == "none" {
+        return "none";
+    }
+    if kind == "struct_literal" {
+        return BootstrapParser.field(expression, "name");
+    }
+    if kind == "list" {
+        items: list<dynamic> = BootstrapParser.field(expression, "items");
+        if len(items) == 0 {
+            return "list";
+        }
+        item_type: string = BootstrapChecker.literal_type(items[0]);
+        for item in items {
+            if BootstrapChecker.literal_type(item) != item_type {
+                return "list";
+            }
+        }
+        return "list<{item_type}>";
+    }
+    if kind == "dict" {
+        entries: list<dynamic> = BootstrapParser.field(expression, "entries");
+        if len(entries) == 0 {
+            return "dict";
+        }
+        key_type: string = BootstrapChecker.literal_type(BootstrapParser.field(entries[0], "key"));
+        value_type: string = BootstrapChecker.literal_type(BootstrapParser.field(entries[0], "value"));
+        return "dict<{key_type}, {value_type}>";
+    }
+    return "dynamic";
+}
+
+fn infer(checker_context: dict<string, dynamic>, locals: dict<string, dynamic>, expression: dict<string, dynamic>) -> string {
+    kind: string = BootstrapParser.node_kind(expression);
+    if kind == "number" {
+        if floor(BootstrapParser.field(expression, "value")) == BootstrapParser.field(expression, "value") {
+            return "integer_literal";
+        }
+        return "float_literal";
+    }
+    if kind == "string" or kind == "template_string" or kind == "input" {
+        return "string";
+    }
+    if kind == "bool" {
+        return "bool";
+    }
+    if kind == "none" {
+        return "none";
+    }
+    if kind == "lambda" {
+        return "fn";
+    }
+    if kind == "list" {
+        items: list<dynamic> = BootstrapParser.field(expression, "items");
+        if len(items) == 0 {
+            return "list";
+        }
+        item_type: string = BootstrapChecker.infer(checker_context, locals, items[0]);
+        for item in items {
+            if BootstrapChecker.infer(checker_context, locals, item) != item_type {
+                return "list";
+            }
+        }
+        return "list<{item_type}>";
+    }
+    if kind == "dict" {
+        entries: list<dynamic> = BootstrapParser.field(expression, "entries");
+        if len(entries) == 0 {
+            return "dict";
+        }
+        key_type: string = BootstrapChecker.infer(checker_context, locals, BootstrapParser.field(entries[0], "key"));
+        value_type: string = BootstrapChecker.infer(checker_context, locals, BootstrapParser.field(entries[0], "value"));
+        for entry in entries {
+            if BootstrapChecker.infer(checker_context, locals, BootstrapParser.field(entry, "key")) != key_type or BootstrapChecker.infer(checker_context, locals, BootstrapParser.field(entry, "value")) != value_type {
+                return "dict";
+            }
+        }
+        return "dict<{key_type}, {value_type}>";
+    }
+    if kind == "struct_literal" {
+        return BootstrapParser.field(expression, "name");
+    }
+    if kind == "identifier" {
+        name: string = BootstrapParser.field(expression, "value");
+        if has(locals, name) {
+            return BootstrapChecker.normalize_type(locals[name]);
+        }
+        if has(checker_context["globals"], name) {
+            return BootstrapChecker.normalize_type(checker_context["globals"][name]);
+        }
+        return BootstrapChecker.builtin_type(name);
+    }
+    if kind == "unary" {
+        if BootstrapParser.field(expression, "op") == "!" or BootstrapParser.field(expression, "op") == "not" {
+            return "bool";
+        }
+        return BootstrapChecker.infer(checker_context, locals, BootstrapParser.field(expression, "operand"));
+    }
+    if kind == "logical" {
+        return "bool";
+    }
+    if kind == "binary" {
+        operator: string = BootstrapParser.field(expression, "op");
+        left_type: string = BootstrapChecker.infer(checker_context, locals, BootstrapParser.field(expression, "left"));
+        right_type: string = BootstrapChecker.infer(checker_context, locals, BootstrapParser.field(expression, "right"));
+        if contains(" == != < > <= >= ", " {operator} ") {
+            return "bool";
+        }
+        if operator == "+" and (left_type == "string" or right_type == "string") {
+            return "string";
+        }
+        if BootstrapChecker.numeric(left_type) and BootstrapChecker.numeric(right_type) {
+            return left_type;
+        }
+        return "dynamic";
+    }
+    if kind == "field" {
+        target_type: string = BootstrapChecker.infer(checker_context, locals, BootstrapParser.field(expression, "target"));
+        field_name: string = BootstrapParser.field(expression, "name");
+        if has(checker_context["structs"], target_type) and has(checker_context["structs"][target_type], field_name) {
+            return BootstrapChecker.normalize_type(checker_context["structs"][target_type][field_name]);
+        }
+        return "dynamic";
+    }
+    if kind == "index" {
+        target_type: string = BootstrapChecker.infer(checker_context, locals, BootstrapParser.field(expression, "target"));
+        list_inner: string = BootstrapChecker.generic_inner(target_type, "list");
+        if list_inner != "" {
+            return list_inner;
+        }
+        if target_type == "string" {
+            return "string";
+        }
+        return "dynamic";
+    }
+    if kind == "call" {
+        callee = BootstrapParser.field(expression, "callee");
+        if BootstrapParser.node_kind(callee) == "identifier" {
+            function_name: string = BootstrapParser.field(callee, "value");
+            if has(checker_context["functions"], function_name) {
+                return BootstrapChecker.normalize_type(checker_context["functions"][function_name]["return_type"]);
+            }
+            return BootstrapChecker.builtin_type(function_name);
+        }
+        if BootstrapParser.node_kind(callee) == "field" {
+            method_target_type: string = BootstrapChecker.infer(checker_context, locals, BootstrapParser.field(callee, "target"));
+            method_name: string = method_target_type + "." + BootstrapParser.field(callee, "name");
+            if has(checker_context["functions"], method_name) {
+                return BootstrapChecker.normalize_type(checker_context["functions"][method_name]["return_type"]);
+            }
+        }
+        return "dynamic";
+    }
+    return "dynamic";
+}
+
+fn check_expression(checker_context: dict<string, dynamic>, locals: dict<string, dynamic>, expression: dict<string, dynamic>) -> string {
+    kind: string = BootstrapParser.node_kind(expression);
+    if kind == "lambda" {
+        lambda_locals: dict<string, dynamic> = merge({}, locals);
+        for parameter in BootstrapParser.field(expression, "parameters") {
+            lambda_locals[BootstrapParser.field(parameter, "name")] = BootstrapChecker.normalize_type(BootstrapParser.field(parameter, "type"));
+        }
+        lambda_expression: dynamic = BootstrapParser.field(expression, "expression");
+        if lambda_expression != none {
+            BootstrapChecker.check_expression(checker_context, lambda_locals, lambda_expression);
+        }
+        BootstrapChecker.check_block_types(checker_context, lambda_locals, BootstrapParser.field(expression, "body"), "dynamic");
+    }
+    if kind == "binary" or kind == "logical" {
+        BootstrapChecker.check_expression(checker_context, locals, BootstrapParser.field(expression, "left"));
+        BootstrapChecker.check_expression(checker_context, locals, BootstrapParser.field(expression, "right"));
+    }
+    if kind == "unary" {
+        BootstrapChecker.check_expression(checker_context, locals, BootstrapParser.field(expression, "operand"));
+    }
+    if kind == "struct_literal" {
+        struct_name: string = BootstrapParser.field(expression, "name");
+        if has(checker_context["structs"], struct_name) {
+            declared_fields = checker_context["structs"][struct_name];
+            seen_fields: dict<string, dynamic> = {};
+            for field_value in BootstrapParser.field(expression, "fields") {
+                field_name: string = BootstrapParser.field(field_value, "name");
+                actual: string = BootstrapChecker.check_expression(checker_context, locals, BootstrapParser.field(field_value, "value"));
+                if !has(declared_fields, field_name) {
+                    BootstrapChecker.diagnostic(checker_context["issues"], "struct '{struct_name}' has no field '{field_name}'");
+                } else {
+                    expected: string = BootstrapChecker.normalize_type(declared_fields[field_name]);
+                    if !BootstrapChecker.assignable_value(expected, actual, BootstrapParser.field(field_value, "value")) {
+                        BootstrapChecker.diagnostic(checker_context["issues"], "field '{struct_name}.{field_name}' expects '{expected}', got '{actual}'");
+                    }
+                }
+                seen_fields[field_name] = true;
+            }
+            for required_field in keys(declared_fields) {
+                if !has(seen_fields, required_field) {
+                    BootstrapChecker.diagnostic(checker_context["issues"], "struct '{struct_name}' is missing field '{required_field}'");
+                }
+            }
+        }
+    }
+    if kind == "call" {
+        callee = BootstrapParser.field(expression, "callee");
+        arguments: list<dynamic> = BootstrapParser.field(expression, "arguments");
+        if BootstrapParser.node_kind(callee) == "identifier" {
+            function_name: string = BootstrapParser.field(callee, "value");
+            if has(checker_context["functions"], function_name) {
+                signature = checker_context["functions"][function_name];
+                parameters: list<dynamic> = signature["parameters"];
+                if len(arguments) != len(parameters) {
+                    BootstrapChecker.diagnostic(checker_context["issues"], "function '{function_name}' expects {len(parameters)} argument(s), got {len(arguments)}");
+                }
+                limit: number = min(len(arguments), len(parameters));
+                for index in range(0, limit) {
+                    actual: string = BootstrapChecker.check_expression(checker_context, locals, arguments[index]);
+                    expected: string = BootstrapChecker.normalize_type(BootstrapParser.field(parameters[index], "type"));
+                    if !BootstrapChecker.assignable_value(expected, actual, arguments[index]) {
+                        BootstrapChecker.diagnostic(checker_context["issues"], "argument {index + 1} of '{function_name}' expects '{expected}', got '{actual}'");
+                    }
+                }
+            }
+        }
+        if BootstrapParser.node_kind(callee) == "field" {
+            method_target_type: string = BootstrapChecker.infer(checker_context, locals, BootstrapParser.field(callee, "target"));
+            method_name: string = method_target_type + "." + BootstrapParser.field(callee, "name");
+            if has(checker_context["functions"], method_name) {
+                signature = checker_context["functions"][method_name];
+                parameters: list<dynamic> = signature["parameters"];
+                expected_count: number = max(0, len(parameters) - 1);
+                if len(arguments) != expected_count {
+                    BootstrapChecker.diagnostic(checker_context["issues"], "method '{method_name}' expects {expected_count} argument(s), got {len(arguments)}");
+                }
+                limit: number = min(len(arguments), expected_count);
+                for index in range(0, limit) {
+                    actual: string = BootstrapChecker.check_expression(checker_context, locals, arguments[index]);
+                    expected: string = BootstrapChecker.normalize_type(BootstrapParser.field(parameters[index + 1], "type"));
+                    if !BootstrapChecker.assignable_value(expected, actual, arguments[index]) {
+                        BootstrapChecker.diagnostic(checker_context["issues"], "argument {index + 1} of method '{method_name}' expects '{expected}', got '{actual}'");
+                    }
+                }
+            }
+        }
+        for argument in arguments {
+            BootstrapChecker.check_expression(checker_context, locals, argument);
+        }
+    }
+    return BootstrapChecker.infer(checker_context, locals, expression);
+}
+
+fn check_statement(checker_context: dict<string, dynamic>, locals: dict<string, dynamic>, statement: dict<string, dynamic>, return_type: string) -> none {
+    kind: string = BootstrapParser.node_kind(statement);
+    if kind == "expression" or kind == "print" or kind == "printnl" or kind == "throw" {
+        BootstrapChecker.check_expression(checker_context, locals, BootstrapParser.field(statement, "value"));
+        return none;
+    }
+    if kind == "run" {
+        BootstrapChecker.check_expression(checker_context, locals, BootstrapParser.field(statement, "command"));
+        return none;
+    }
+    if kind == "const" {
+        const_type: string = BootstrapChecker.check_expression(checker_context, locals, BootstrapParser.field(statement, "value"));
+        locals[BootstrapParser.field(statement, "name")] = const_type;
+        return none;
+    }
+    if kind == "assign" {
+        actual: string = BootstrapChecker.check_expression(checker_context, locals, BootstrapParser.field(statement, "value"));
+        target = BootstrapParser.field(statement, "target");
+        if BootstrapParser.node_kind(target) == "identifier" {
+            name: string = BootstrapParser.field(target, "value");
+            annotation: string = BootstrapChecker.normalize_type(BootstrapParser.field(statement, "type"));
+            expected: string = annotation;
+            if annotation == "dynamic" and has(locals, name) {
+                expected = BootstrapChecker.normalize_type(locals[name]);
+            }
+            if !BootstrapChecker.assignable_value(expected, actual, BootstrapParser.field(statement, "value")) {
+                BootstrapChecker.diagnostic(checker_context["issues"], "cannot assign '{actual}' to '{name}: {expected}'");
+            }
+            stored_type: string = expected;
+            if expected == "dynamic" {
+                stored_type = actual;
+            }
+            locals[name] = stored_type;
+        }
+        return none;
+    }
+    if kind == "return" {
+        value: dynamic = BootstrapParser.field(statement, "value");
+        actual: string = "none";
+        if value != none {
+            actual = BootstrapChecker.check_expression(checker_context, locals, value);
+        }
+        if value != none and !BootstrapChecker.assignable_value(return_type, actual, value) {
+            BootstrapChecker.diagnostic(checker_context["issues"], "return expects '{return_type}', got '{actual}'");
+        } else if value == none and !BootstrapChecker.assignable(return_type, actual) {
+            BootstrapChecker.diagnostic(checker_context["issues"], "return expects '{return_type}', got '{actual}'");
+        }
+        return none;
+    }
+    if kind == "if" or kind == "while" {
+        condition_type: string = BootstrapChecker.check_expression(checker_context, locals, BootstrapParser.field(statement, "condition"));
+        if condition_type != "bool" and condition_type != "dynamic" {
+            BootstrapChecker.diagnostic(checker_context["issues"], "condition should be bool, got '{condition_type}'");
+        }
+    }
+    if kind == "if" {
+        BootstrapChecker.check_block_types(checker_context, merge({}, locals), BootstrapParser.field(statement, "then"), return_type);
+        BootstrapChecker.check_block_types(checker_context, merge({}, locals), BootstrapParser.field(statement, "else"), return_type);
+    }
+    if kind == "while" or kind == "for" {
+        BootstrapChecker.check_block_types(checker_context, merge({}, locals), BootstrapParser.field(statement, "body"), return_type);
+    }
+    if kind == "try" {
+        BootstrapChecker.check_block_types(checker_context, merge({}, locals), BootstrapParser.field(statement, "body"), return_type);
+        BootstrapChecker.check_block_types(checker_context, merge({}, locals), BootstrapParser.field(statement, "catch_body"), return_type);
+    }
+    return none;
+}
+
+fn check_block_types(checker_context: dict<string, dynamic>, locals: dict<string, dynamic>, statements: list<dynamic>, return_type: string) -> none {
+    for statement in statements {
+        BootstrapChecker.check_statement(checker_context, locals, statement, return_type);
+    }
+    return none;
+}
+
+fn statement_returns(statement: dict<string, dynamic>) -> bool {
+    kind: string = BootstrapParser.node_kind(statement);
+    if kind == "return" or kind == "throw" {
+        return true;
+    }
+    if kind == "if" {
+        else_body: list<dynamic> = BootstrapParser.field(statement, "else");
+        return len(else_body) > 0 and BootstrapChecker.block_returns(BootstrapParser.field(statement, "then")) and BootstrapChecker.block_returns(else_body);
+    }
+    if kind == "try" {
+        catch_body: list<dynamic> = BootstrapParser.field(statement, "catch_body");
+        return len(catch_body) > 0 and BootstrapChecker.block_returns(BootstrapParser.field(statement, "body")) and BootstrapChecker.block_returns(catch_body);
+    }
+    return false;
+}
+
+fn block_returns(statements: list<dynamic>) -> bool {
+    for statement in statements {
+        if BootstrapChecker.statement_returns(statement) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn check_types(checker_context: dict<string, dynamic>, program: dict<string, dynamic>) -> none {
+    for function_node in BootstrapParser.field(program, "functions") {
+        function_locals: dict<string, dynamic> = {};
+        for parameter in BootstrapParser.field(function_node, "parameters") {
+            function_locals[BootstrapParser.field(parameter, "name")] = BootstrapChecker.normalize_type(BootstrapParser.field(parameter, "type"));
+        }
+        expected_return: string = BootstrapChecker.normalize_type(BootstrapParser.field(function_node, "return_type"));
+        function_body: list<dynamic> = BootstrapParser.field(function_node, "body");
+        BootstrapChecker.check_block_types(checker_context, function_locals, function_body, expected_return);
+        if expected_return != "dynamic" and expected_return != "none" and !BootstrapChecker.block_returns(function_body) {
+            BootstrapChecker.diagnostic(checker_context["issues"], "function '{BootstrapParser.field(function_node, "name")}' may not return '{expected_return}' on every path");
+        }
+    }
+    main_locals: dict<string, dynamic> = {};
+    BootstrapChecker.check_block_types(checker_context, main_locals, BootstrapParser.field(program, "body"), "dynamic");
+    return none;
+}
+
+fn check_program(program: dict<string, dynamic>) -> list<string> {
+    checker_context = BootstrapChecker.context(program);
+    BootstrapChecker.collect_declarations(checker_context, program);
+    BootstrapChecker.resolve(checker_context, program);
+    BootstrapChecker.check_types(checker_context, program);
+    return checker_context["issues"];
+}
+
+fn check(source: string) -> list<string> {
+    return BootstrapChecker.check_program(BootstrapParser.parse(source));
+}

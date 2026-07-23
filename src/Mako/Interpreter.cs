@@ -222,6 +222,10 @@ public class Interpreter
         public HashSet<string>             Consts { get; } = new();
     }
     private readonly List<Scope> _scopes = [new()];
+    // Index of the first scope owned by each active function/lambda call.
+    // Locals in an earlier call frame are not dynamically visible to a
+    // callee; only the current frame and the true global scope are visible.
+    private readonly Stack<int> _callScopeBases = new();
 
     // ── Entry point ───────────────────────────────────────────────────────────
 
@@ -780,7 +784,7 @@ public class Interpreter
             throw new MakoError(
                 $"'{fnName}' expects {fn.Params.Count - 1} argument(s) (plus self), got {args.Count}");
 
-        PushScope();
+        PushCallScope();
         _scopes[^1].Vars[fn.Params[0]] = self;
         for (int i = 0; i < args.Count; i++)
             _scopes[^1].Vars[fn.Params[i + 1]] = args[i];
@@ -792,7 +796,7 @@ public class Interpreter
             if (_flow == Flow.Return) ret = _returnValue;
             ResetFlowAtTopLevel();
         }
-        finally { PopScope(); }
+        finally { PopCallScope(); }
         return ret;
     }
 
@@ -845,7 +849,7 @@ public class Interpreter
         if (args.Count != fn.Params.Count)
             throw new MakoError($"lambda expects {fn.Params.Count} argument(s), got {args.Count}");
 
-        PushScope();
+        PushCallScope();
         // Inject captured variables first, then params (params shadow captures).
         foreach (var (k, v) in fn.Captured)
             _scopes[^1].Vars[k] = v;
@@ -859,7 +863,7 @@ public class Interpreter
             ResetFlowAtTopLevel();
             return ret;
         }
-        finally { PopScope(); }
+        finally { PopCallScope(); }
     }
 
     /// Call any callable value — MakoFn lambda or named function.
@@ -984,7 +988,7 @@ public class Interpreter
         if (args.Count != fn.Params.Count)
             throw new MakoError($"'{name}' expects {fn.Params.Count} argument(s), got {args.Count}");
 
-        PushScope();
+        PushCallScope();
         for (int i = 0; i < fn.Params.Count; i++)
             _scopes[^1].Vars[fn.Params[i]] = args[i];
 
@@ -1002,7 +1006,7 @@ public class Interpreter
             throw new MakoError(e.RawMessage, e.Line, e.Col, e.Length)
                   { SourcePath = fn.Source };
         }
-        finally { PopScope(); }
+        finally { PopCallScope(); }
         return ret;
     }
 
@@ -2050,10 +2054,33 @@ public class Interpreter
 
     private void PushScope() => _scopes.Add(new Scope());
     private void PopScope()  => _scopes.RemoveAt(_scopes.Count - 1);
+    private void PushCallScope()
+    {
+        PushScope();
+        _callScopeBases.Push(_scopes.Count - 1);
+    }
+    private void PopCallScope()
+    {
+        _callScopeBases.Pop();
+        PopScope();
+    }
+
+    private IEnumerable<int> VisibleScopeIndices()
+    {
+        if (_callScopeBases.Count == 0)
+        {
+            for (int i = _scopes.Count - 1; i >= 0; i--) yield return i;
+            yield break;
+        }
+
+        int callBase = _callScopeBases.Peek();
+        for (int i = _scopes.Count - 1; i >= callBase; i--) yield return i;
+        if (callBase > 0) yield return 0;
+    }
 
     private bool TryGetVar(string name, out object? value)
     {
-        for (int i = _scopes.Count - 1; i >= 0; i--)
+        foreach (int i in VisibleScopeIndices())
             if (_scopes[i].Vars.TryGetValue(name, out value)) return true;
         value = null;
         return false;
@@ -2061,7 +2088,7 @@ public class Interpreter
 
     private object? GetVar(string name)
     {
-        for (int i = _scopes.Count - 1; i >= 0; i--)
+        foreach (int i in VisibleScopeIndices())
             if (_scopes[i].Vars.TryGetValue(name, out var v)) return v;
 
         // Not found as a flattened "Base.Field" name (how 'using'd namespace
@@ -2091,7 +2118,7 @@ public class Interpreter
 
     private void SetVar(string name, object? value)
     {
-        for (int i = _scopes.Count - 1; i >= 0; i--)
+        foreach (int i in VisibleScopeIndices())
         {
             if (_scopes[i].Vars.ContainsKey(name))
             {

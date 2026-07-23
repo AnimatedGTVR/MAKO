@@ -1,0 +1,39 @@
+use "../selfhost/runtime.mko";
+use "../selfhost/lexer.mko";
+use "../selfhost/parser.mko";
+use "../selfhost/checker.mko";
+
+fn contains_issue(issues, text) {
+    for issue in issues {
+        if contains(issue, text) {
+            return true;
+        }
+    }
+    return false;
+}
+
+main() {
+    valid = "struct Point {{ x: i32, y: i32 }}\n" + "fn add(left: i32, right: i32) -> i32 {{\n" + "    return left + right;\n" + "}}\n" + "fn Point.move(self: Point, dx: i32) -> i32 {{\n" + "    return self.x + dx;\n" + "}}\n" + "main() {{\n" + "    point: Point = Point {{ x: 1, y: 2 }};\n" + "    total: i32 = add(point.x, point.y);\n" + "    moved: i32 = point.move(3);\n" + "    bytes: list<u8> = [1, 255];\n" + "    table: dict<string, list<u8>> = {{\"boot\": [1, 255]}};\n" + "    transform = fn(value: i32) => value + 1;\n" + "    label = \"total={{total}}\";\n" + "}}\n";
+    valid_issues = BootstrapChecker.check(valid);
+    assert(len(valid_issues) == 0, "valid typed program has no semantic issues: {json_encode(valid_issues)}");
+    invalid = "const MAX = 10;\n" + "struct Pair {{ left: i32, left: string }}\n" + "fn choose(value: i32) -> string {{\n" + "    return value;\n" + "}}\n" + "fn Pair.take(self: Pair, count: u8) -> i32 {{\n" + "    return self.left;\n" + "}}\n" + "fn incomplete(flag: bool) -> i32 {{\n" + "    if flag {{ return 1; }}\n" + "}}\n" + "main() {{\n" + "    count: i32 = \"many\";\n" + "    byte: u8 = 300;\n" + "    bytes: list<u8> = [1, 300];\n" + "    table: dict<string, list<u8>> = {{\"boot\": [1, 300]}};\n" + "    result = choose(\"wrong\");\n" + "    pair: Pair = Pair {{ left: \"bad\" }};\n" + "    pair.take(\"wrong\");\n" + "    MAX = 11;\n" + "    const LIMIT = 2;\n" + "    LIMIT = 3;\n" + "    bad_lambda = fn(value: i32) {{ local: u8 = 300; return value; }};\n" + "    print missing_name;\n" + "}}\n";
+    issues = BootstrapChecker.check(invalid);
+    assert(contains_issue(issues, "duplicate field 'left'"), "duplicate field diagnostic");
+    assert(contains_issue(issues, "return expects 'string'"), "return type diagnostic");
+    assert(contains_issue(issues, "cannot assign 'string'"), "assignment type diagnostic");
+    assert(contains_issue(issues, "argument 1 of 'choose'"), "argument type diagnostic");
+    assert(contains_issue(issues, "cannot assign 'integer_literal' to 'byte: u8'"), "fixed-width literal range diagnostic");
+    assert(contains_issue(issues, "cannot assign 'list<integer_literal>' to 'bytes: list<u8>'"), "typed list element range diagnostic");
+    assert(contains_issue(issues, "cannot assign 'dict<string, list<integer_literal>>' to 'table: dict<string, list<u8>>'"), "nested generic range diagnostic");
+    assert(contains_issue(issues, "argument 1 of method 'Pair.take'"), "method argument diagnostic");
+    assert(contains_issue(issues, "function 'incomplete' may not return"), "all-path return diagnostic");
+    assert(contains_issue(issues, "cannot reassign const 'MAX'"), "global const reassignment diagnostic");
+    assert(contains_issue(issues, "cannot reassign const 'LIMIT'"), "local const reassignment diagnostic");
+    assert(contains_issue(issues, "cannot assign 'integer_literal' to 'local: u8'"), "lambda body type diagnostic");
+    assert(contains_issue(issues, "field 'Pair.left' expects 'i32'"), "struct field type diagnostic");
+    assert(contains_issue(issues, "unresolved name 'missing_name'"), "unresolved name diagnostic");
+    duplicate_parameter = "fn bad(value: i32, value: i32) -> i32 {{ return value; }}\n";
+    issues = BootstrapChecker.check(duplicate_parameter);
+    assert(contains_issue(issues, "duplicate parameter 'value'"), "duplicate parameter diagnostic");
+    print "MAKO self-host checker tests pass!";
+}

@@ -1,0 +1,144 @@
+namespace BootstrapRuntime;
+
+# Hosted runtime foundations for the self-hosted MAKO compiler.
+# Keeping compiler code behind these functions lets the implementation move
+# from interpreter collections to native buffers/maps without changing users.
+fn text_buffer() -> list<string> {
+    buffer: list<string> = [];
+    return buffer;
+}
+
+fn text_append(buffer: list<string>, text: string) -> none {
+    push(buffer, text);
+    return none;
+}
+
+fn text_append_char(buffer: list<string>, character: string) -> none {
+    assert(len(character) == 1, "text_append_char expects one character");
+    push(buffer, character);
+    return none;
+}
+
+fn text_finish(buffer: list<string>) -> string {
+    return join(buffer, "");
+}
+
+fn text_repeat(text: string, count: usize) -> string {
+    parts: list<string> = [];
+    index: usize = 0;
+    while index < count {
+        push(parts, text);
+        index = index + 1;
+    }
+    return join(parts, "");
+}
+
+fn char_at(text: string, index: usize) -> string {
+    assert(index < len(text), "character index out of bounds");
+    return text[index];
+}
+
+fn is_space(character: string) -> bool {
+    return character == " " or character == "\t" or character == "\n" or character == "\r";
+}
+
+fn is_digit(character: string) -> bool {
+    return len(character) == 1 and contains("0123456789", character);
+}
+
+fn is_alpha(character: string) -> bool {
+    return len(character) == 1 and contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", character);
+}
+
+fn is_identifier_start(character: string) -> bool {
+    return BootstrapRuntime.is_alpha(character) or character == "_";
+}
+
+fn is_identifier_continue(character: string) -> bool {
+    return BootstrapRuntime.is_identifier_start(character) or BootstrapRuntime.is_digit(character);
+}
+
+fn source_lines(source: string) -> list<string> {
+    return split(replace(source, "\r\n", "\n"), "\n");
+}
+
+fn source_line(source: string, line: usize) -> string {
+    all_lines: list<string> = BootstrapRuntime.source_lines(source);
+    assert(line > 0 and line <= len(all_lines), "source line out of bounds");
+    return all_lines[line - 1];
+}
+
+fn string_map() -> dict<string, dynamic> {
+    table: dict<string, dynamic> = {};
+    return table;
+}
+
+fn map_put(table: dict<string, dynamic>, key: string, value: dynamic) -> none {
+    table[key] = value;
+    return none;
+}
+
+fn map_contains(table: dict<string, dynamic>, key: string) -> bool {
+    return has(table, key);
+}
+
+fn map_get(table: dict<string, dynamic>, key: string, fallback: dynamic) -> dynamic {
+    return get(table, key, fallback);
+}
+
+fn map_require(table: dict<string, dynamic>, key: string) -> dynamic {
+    if !has(table, key) {
+        throw "missing map key: {key}";
+    }
+    return table[key];
+}
+
+fn map_delete(table: dict<string, dynamic>, key: string) -> none {
+    remove(table, key);
+    return none;
+}
+
+fn result_ok(value: dynamic) -> dict<string, dynamic> {
+    result: dict<string, dynamic> = {"ok": true, "value": value, "error": none};
+    return result;
+}
+
+fn result_error(message: string) -> dict<string, dynamic> {
+    result: dict<string, dynamic> = {"ok": false, "value": none, "error": message};
+    return result;
+}
+
+fn result_is_ok(result: dict<string, dynamic>) -> bool {
+    return result["ok"];
+}
+
+fn result_value(result: dict<string, dynamic>) -> dynamic {
+    if !result["ok"] {
+        throw result["error"];
+    }
+    return result["value"];
+}
+
+fn result_message(result: dict<string, dynamic>) -> string {
+    if result["ok"] {
+        return "";
+    }
+    return result["error"];
+}
+
+fn read_source(path: string) -> dict<string, dynamic> {
+    try {
+        return BootstrapRuntime.result_ok(read(path));
+    } catch error {
+        return BootstrapRuntime.result_error("cannot read '{path}': {error}");
+    }
+}
+
+fn write_output(path: string, contents: string) -> dict<string, dynamic> {
+    try {
+        write(path, contents);
+        return BootstrapRuntime.result_ok(none);
+    } catch error {
+        return BootstrapRuntime.result_error("cannot write '{path}': {error}");
+    }
+}

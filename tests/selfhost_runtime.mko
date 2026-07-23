@@ -1,0 +1,42 @@
+use "../selfhost/runtime.mko";
+
+main() {
+    buffer = BootstrapRuntime.text_buffer();
+    BootstrapRuntime.text_append(buffer, "MA");
+    BootstrapRuntime.text_append_char(buffer, "K");
+    BootstrapRuntime.text_append_char(buffer, "O");
+    assert(BootstrapRuntime.text_finish(buffer) == "MAKO", "text buffer");
+    assert(BootstrapRuntime.text_repeat("ab", 3) == "ababab", "text repeat");
+    assert(BootstrapRuntime.char_at("mako", 2) == "k", "character access");
+    assert(BootstrapRuntime.is_space("\n"), "newline is whitespace");
+    assert(BootstrapRuntime.is_digit("7"), "digit classification");
+    assert(!BootstrapRuntime.is_digit("x"), "non-digit classification");
+    assert(BootstrapRuntime.is_alpha("Q"), "letter classification");
+    assert(BootstrapRuntime.is_identifier_start("_"), "underscore starts identifiers");
+    assert(BootstrapRuntime.is_identifier_continue("8"), "digits continue identifiers");
+    source = "first\r\nsecond\nthird";
+    assert(len(BootstrapRuntime.source_lines(source)) == 3, "source line splitting");
+    assert(BootstrapRuntime.source_line(source, 2) == "second", "one-based source lines");
+    symbols = BootstrapRuntime.string_map();
+    BootstrapRuntime.map_put(symbols, "answer", 42);
+    assert(BootstrapRuntime.map_contains(symbols, "answer"), "map contains");
+    assert(BootstrapRuntime.map_require(symbols, "answer") == 42, "required map lookup");
+    assert(BootstrapRuntime.map_get(symbols, "missing", 9) == 9, "map fallback");
+    BootstrapRuntime.map_delete(symbols, "answer");
+    assert(!BootstrapRuntime.map_contains(symbols, "answer"), "map delete");
+    good = BootstrapRuntime.result_ok("token");
+    assert(BootstrapRuntime.result_is_ok(good), "successful result");
+    assert(BootstrapRuntime.result_value(good) == "token", "successful result value");
+    assert(BootstrapRuntime.result_message(good) == "", "successful result message");
+    bad = BootstrapRuntime.result_error("bad token");
+    assert(!BootstrapRuntime.result_is_ok(bad), "failed result");
+    assert(BootstrapRuntime.result_message(bad) == "bad token", "failed result message");
+    caught = false;
+    try {
+        BootstrapRuntime.result_value(bad);
+    } catch error {
+        caught = error == "bad token";
+    }
+    assert(caught, "failed result unwrap throws");
+    print "MAKO self-host runtime tests pass!";
+}

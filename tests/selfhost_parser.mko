@@ -1,0 +1,96 @@
+use "../selfhost/runtime.mko";
+use "../selfhost/lexer.mko";
+use "../selfhost/parser.mko";
+
+main() {
+    source = "script \"Demo\";\n" + "using Net;\n" + "use \"math.mko\";\n" + "fn add(left: i32, right: i32) -> i32 {{\n" + "    return left + right * 2;\n" + "}}\n" + "main() {{\n" + "    values = [1, 2, 3];\n" + "    if add(values[0], 4) >= 9 {{\n" + "        print \"ok\";\n" + "    }} else {{\n" + "        print \"no\";\n" + "    }}\n" + "}}\n";
+    program = BootstrapParser.parse(source);
+    assert(BootstrapParser.node_kind(program) == "program", "program node");
+    assert(BootstrapParser.field(program, "script") == "Demo", "script name");
+    assert(len(BootstrapParser.field(program, "packages")) == 1, "package count");
+    assert(len(BootstrapParser.field(program, "imports")) == 1, "import count");
+    assert(len(BootstrapParser.field(program, "functions")) == 1, "function count");
+    function = BootstrapParser.field(program, "functions")[0];
+    assert(BootstrapParser.field(function, "name") == "add", "function name");
+    assert(BootstrapParser.field(function, "return_type") == "i32", "return type");
+    assert(len(BootstrapParser.field(function, "parameters")) == 2, "parameters");
+    return_statement = BootstrapParser.field(function, "body")[0];
+    expression = BootstrapParser.field(return_statement, "value");
+    assert(BootstrapParser.field(expression, "op") == "+", "outer addition");
+    assert(BootstrapParser.field(BootstrapParser.field(expression, "right"), "op") == "*", "multiplication precedence");
+    body = BootstrapParser.field(program, "body");
+    assert(len(body) == 2, "main statements");
+    assert(BootstrapParser.node_kind(body[0]) == "assign", "assignment node");
+    assert(BootstrapParser.node_kind(body[1]) == "if", "if node");
+    assert(len(BootstrapParser.field(body[1], "then")) == 1, "then block");
+    assert(len(BootstrapParser.field(body[1], "else")) == 1, "else block");
+    extended_source = "const MAX = 10;\n" + "struct Point {{ x: i32, y: i32 }}\n" + "fn Point.shift(self: Point, dx: i32) -> Point {{\n" + "    return Point {{ x: self.x + dx, y: self.y }};\n" + "}}\n" + "main() {{\n" + "    const LABEL = \"point\";\n" + "    point: Point = Point {{ x: 1, y: 2 }};\n" + "    scale = fn(value) => value * 2;\n" + "    block = fn(value) {{ return value + 1; }};\n" + "    try {{\n" + "        if input \"> \" {{ throw \"stop\"; }}\n" + "        run \"echo parsed\";\n" + "    }} catch err {{\n" + "        print err;\n" + "    }}\n" + "    point.x += 1;\n" + "    point[\"x\"] = 2;\n" + "}}\n";
+    extended = BootstrapParser.parse(extended_source);
+    assert(len(BootstrapParser.field(extended, "constants")) == 1, "top-level constant");
+    assert(len(BootstrapParser.field(extended, "structs")) == 1, "struct declaration");
+    method = BootstrapParser.field(extended, "functions")[0];
+    assert(BootstrapParser.field(method, "name") == "Point.shift", "method declaration");
+    method_return = BootstrapParser.field(method, "body")[0];
+    assert(BootstrapParser.node_kind(BootstrapParser.field(method_return, "value")) == "struct_literal", "struct literal");
+    extended_body = BootstrapParser.field(extended, "body");
+    assert(BootstrapParser.node_kind(extended_body[0]) == "const", "local constant");
+    assert(BootstrapParser.field(extended_body[1], "type") == "Point", "typed assignment");
+    assert(BootstrapParser.node_kind(BootstrapParser.field(extended_body[2], "value")) == "lambda", "arrow lambda");
+    assert(BootstrapParser.node_kind(BootstrapParser.field(extended_body[3], "value")) == "lambda", "block lambda");
+    assert(BootstrapParser.node_kind(extended_body[4]) == "try", "try/catch statement");
+    assert(BootstrapParser.field(extended_body[4], "catch_name") == "err", "catch binding");
+    assert(BootstrapParser.field(extended_body[5], "op") == "+=", "field compound assignment");
+    assert(BootstrapParser.node_kind(BootstrapParser.field(extended_body[6], "target")) == "index", "index assignment");
+    template_program = BootstrapParser.parse("main() {{\n" + "    print \"hello {{user[\"name\"]}}: {{add(1, 2 * 3)}} {{{{ok}}}}\";\n" + "}}\n");
+    template_print = BootstrapParser.field(template_program, "body")[0];
+    template_value = BootstrapParser.field(template_print, "value");
+    assert(BootstrapParser.node_kind(template_value) == "template_string", "template AST node");
+    template_parts = BootstrapParser.field(template_value, "parts");
+    assert(len(template_parts) == 5, "template text/expression parts");
+    assert(BootstrapParser.field(template_parts[0], "value") == "hello ", "template leading text");
+    assert(BootstrapParser.node_kind(BootstrapParser.field(template_parts[1], "value")) == "index", "template index expression");
+    template_call = BootstrapParser.field(template_parts[3], "value");
+    assert(BootstrapParser.node_kind(template_call) == "call", "template call expression");
+    call_arguments = BootstrapParser.field(template_call, "arguments");
+    assert(BootstrapParser.field(call_arguments[1], "op") == "*", "template expression precedence");
+    assert(BootstrapParser.field(template_parts[4], "value") == " {{ok}}", "template escaped braces");
+    failed = false;
+    try {
+        BootstrapParser.parse_template("{{value");
+    } catch error {
+        failed = contains(error, "close template interpolation");
+    }
+    assert(failed, "unclosed template interpolation diagnostic");
+    failed = false;
+    try {
+        BootstrapParser.parse_template("{{}}");
+    } catch error {
+        failed = contains(error, "cannot be empty");
+    }
+    assert(failed, "empty template interpolation diagnostic");
+    parity_cases = json_decode(read("tests/fixtures/selfhost_parser_cases.json"));
+    for parity_case in parity_cases {
+        parity_program = BootstrapParser.parse(parity_case["source"]);
+        parity_assignment = BootstrapParser.field(parity_program, "body")[0];
+        parity_expression = BootstrapParser.field(parity_assignment, "value");
+        assert(BootstrapParser.node_kind(parity_expression) == parity_case["kind"], parity_case["name"]);
+        if parity_case["op"] != "" {
+            assert(BootstrapParser.field(parity_expression, "op") == parity_case["op"], parity_case["name"]);
+        }
+    }
+    failed = false;
+    try {
+        BootstrapParser.parse("main() {{ print 1 }}");
+    } catch error {
+        failed = contains(error, "expected ';' after print");
+    }
+    assert(failed, "missing semicolon diagnostic");
+    failed = false;
+    try {
+        BootstrapParser.parse("main() {{ values = [1, 2; }}");
+    } catch error {
+        failed = contains(error, "expected ']' after list");
+    }
+    assert(failed, "missing list delimiter diagnostic");
+    print "MAKO self-host parser tests pass!";
+}

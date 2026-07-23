@@ -1,0 +1,473 @@
+namespace BootstrapMir;
+
+use "runtime.mko";
+use "lexer.mko";
+use "parser.mko";
+use "checker.mko";
+use "hir.mko";
+
+fn value(name: string, type_name: string) -> dict<string, dynamic> {
+    result: dict<string, dynamic> = {"name": name, "type": type_name};
+    return result;
+}
+
+fn block(label: string) -> dict<string, dynamic> {
+    result: dict<string, dynamic> = {"label": label, "instructions": [], "terminator": none};
+    return result;
+}
+
+fn builder(name: string, return_type: string) -> dict<string, dynamic> {
+    entry = BootstrapMir.block("entry");
+    result: dict<string, dynamic> = {
+            "name": name,
+            "return_type": return_type,
+            "blocks": [entry],
+            "current": entry,
+            "temp_index": 0,
+            "block_index": 0,
+            "locals": {},
+            "loops": []
+        };
+    return result;
+}
+
+fn next_temp(mir_builder: dict<string, dynamic>) -> string {
+    index: number = mir_builder["temp_index"];
+    mir_builder["temp_index"] = index + 1;
+    return "%t{index}";
+}
+
+fn emit(mir_builder: dict<string, dynamic>, op: string, type_name: string, arguments: list<dynamic>) -> dict<string, dynamic> {
+    temporary: string = BootstrapMir.next_temp(mir_builder);
+    instruction: dict<string, dynamic> = {
+            "result": temporary,
+            "type": type_name,
+            "op": op,
+            "arguments": arguments
+        };
+    push(mir_builder["current"]["instructions"], instruction);
+    return BootstrapMir.value(temporary, type_name);
+}
+
+fn emit_effect(mir_builder: dict<string, dynamic>, op: string, arguments: list<dynamic>) -> none {
+    instruction: dict<string, dynamic> = {
+            "result": none,
+            "type": "none",
+            "op": op,
+            "arguments": arguments
+        };
+    push(mir_builder["current"]["instructions"], instruction);
+    return none;
+}
+
+fn terminate(mir_builder: dict<string, dynamic>, op: string, arguments: list<dynamic>, targets: list<string>) -> none {
+    if mir_builder["current"]["terminator"] != none {
+        throw "MIR block '{mir_builder["current"]["label"]}' already has a terminator";
+    }
+    mir_builder["current"]["terminator"] = {"op": op, "arguments": arguments, "targets": targets};
+    return none;
+}
+
+fn open(mir_builder: dict<string, dynamic>) -> bool {
+    return mir_builder["current"]["terminator"] == none;
+}
+
+fn new_block(mir_builder: dict<string, dynamic>, purpose: string) -> dict<string, dynamic> {
+    index: number = mir_builder["block_index"];
+    mir_builder["block_index"] = index + 1;
+    result = BootstrapMir.block("{purpose}.{index}");
+    push(mir_builder["blocks"], result);
+    return result;
+}
+
+fn switch_to(mir_builder: dict<string, dynamic>, block: dict<string, dynamic>) -> none {
+    mir_builder["current"] = block;
+    return none;
+}
+
+fn jump_if_open(mir_builder: dict<string, dynamic>, target: dict<string, dynamic>) -> none {
+    if BootstrapMir.open(mir_builder) {
+        BootstrapMir.terminate(mir_builder, "jump", [], [target["label"]]);
+    }
+    return none;
+}
+
+fn argument(mir_value: dict<string, dynamic>) -> dict<string, dynamic> {
+    return {"value": mir_value["name"], "type": mir_value["type"]};
+}
+
+fn lower_expression(mir_builder: dict<string, dynamic>, expression: dict<string, dynamic>) -> dict<string, dynamic> {
+    op: string = expression["op"];
+    type_name: string = get(expression, "type", "dynamic");
+    if op == "literal" {
+        return BootstrapMir.emit(mir_builder, "const", type_name, [get(expression, "value", none)]);
+    }
+    if op == "load" {
+        name: string = expression["name"];
+        return BootstrapMir.emit(mir_builder, "load", type_name, [name]);
+    }
+    if op == "binary" or op == "logical" {
+        left = BootstrapMir.lower_expression(mir_builder, expression["left"]);
+        right = BootstrapMir.lower_expression(mir_builder, expression["right"]);
+        return BootstrapMir.emit(mir_builder, "{op}.{expression["operator"]}", type_name, [BootstrapMir.argument(left), BootstrapMir.argument(right)]);
+    }
+    if op == "unary" {
+        operand = BootstrapMir.lower_expression(mir_builder, expression["operand"]);
+        return BootstrapMir.emit(mir_builder, "unary.{expression["operator"]}", type_name, [BootstrapMir.argument(operand)]);
+    }
+    if op == "call" {
+        callee = BootstrapMir.lower_expression(mir_builder, expression["callee"]);
+        arguments: list<dynamic> = [BootstrapMir.argument(callee)];
+        for argument_expression in expression["arguments"] {
+            argument_value = BootstrapMir.lower_expression(mir_builder, argument_expression);
+            push(arguments, BootstrapMir.argument(argument_value));
+        }
+        return BootstrapMir.emit(mir_builder, "call", type_name, arguments);
+    }
+    if op == "field" {
+        target = BootstrapMir.lower_expression(mir_builder, expression["target"]);
+        return BootstrapMir.emit(mir_builder, "field.get", type_name, [BootstrapMir.argument(target), expression["name"]]);
+    }
+    if op == "index" {
+        target = BootstrapMir.lower_expression(mir_builder, expression["target"]);
+        index = BootstrapMir.lower_expression(mir_builder, expression["index"]);
+        return BootstrapMir.emit(mir_builder, "index.get", type_name, [BootstrapMir.argument(target), BootstrapMir.argument(index)]);
+    }
+    if op == "list" {
+        arguments: list<dynamic> = [];
+        for item in expression["items"] {
+            item_value = BootstrapMir.lower_expression(mir_builder, item);
+            push(arguments, BootstrapMir.argument(item_value));
+        }
+        return BootstrapMir.emit(mir_builder, "list.new", type_name, arguments);
+    }
+    if op == "dict" {
+        arguments: list<dynamic> = [];
+        for entry in expression["entries"] {
+            key = BootstrapMir.lower_expression(mir_builder, entry["key"]);
+            value = BootstrapMir.lower_expression(mir_builder, entry["value"]);
+            push(arguments, BootstrapMir.argument(key));
+            push(arguments, BootstrapMir.argument(value));
+        }
+        return BootstrapMir.emit(mir_builder, "dict.new", type_name, arguments);
+    }
+    if op == "struct" {
+        arguments: list<dynamic> = [expression["name"]];
+        for field_value in expression["fields"] {
+            lowered_value = BootstrapMir.lower_expression(mir_builder, field_value["value"]);
+            push(arguments, field_value["name"]);
+            push(arguments, BootstrapMir.argument(lowered_value));
+        }
+        return BootstrapMir.emit(mir_builder, "struct.new", type_name, arguments);
+    }
+    if op == "template" {
+        arguments: list<dynamic> = [];
+        for part in expression["parts"] {
+            if part["op"] == "template_text" {
+                push(arguments, part["value"]);
+            } else {
+                part_value = BootstrapMir.lower_expression(mir_builder, part["value"]);
+                push(arguments, BootstrapMir.argument(part_value));
+            }
+        }
+        return BootstrapMir.emit(mir_builder, "template.build", "string", arguments);
+    }
+    if op == "input" {
+        prompt = BootstrapMir.lower_expression(mir_builder, expression["prompt"]);
+        return BootstrapMir.emit(mir_builder, "input", "string", [BootstrapMir.argument(prompt)]);
+    }
+    if op == "lambda" {
+        return BootstrapMir.emit(mir_builder, "lambda.new", "fn", [expression]);
+    }
+    return BootstrapMir.emit(mir_builder, "dynamic.{op}", type_name, [expression]);
+}
+
+fn lower_assignment_target(mir_builder: dict<string, dynamic>, target: dict<string, dynamic>, value: dict<string, dynamic>, operator: string) -> none {
+    if target["op"] == "load" {
+        name: string = target["name"];
+        BootstrapMir.emit_effect(mir_builder, "store", [name, BootstrapMir.argument(value), operator]);
+        mir_builder["locals"][name] = value["type"];
+        return none;
+    }
+    if target["op"] == "field" {
+        owner = BootstrapMir.lower_expression(mir_builder, target["target"]);
+        BootstrapMir.emit_effect(mir_builder, "field.set", [BootstrapMir.argument(owner), target["name"], BootstrapMir.argument(value), operator]);
+        return none;
+    }
+    if target["op"] == "index" {
+        owner = BootstrapMir.lower_expression(mir_builder, target["target"]);
+        index = BootstrapMir.lower_expression(mir_builder, target["index"]);
+        BootstrapMir.emit_effect(mir_builder, "index.set", [BootstrapMir.argument(owner), BootstrapMir.argument(index), BootstrapMir.argument(value), operator]);
+        return none;
+    }
+    throw "unsupported MIR assignment target '{target["op"]}'";
+}
+
+fn lower_statement(mir_builder: dict<string, dynamic>, statement: dict<string, dynamic>) -> none {
+    op: string = statement["op"];
+    if op == "assign" {
+        value = BootstrapMir.lower_expression(mir_builder, statement["value"]);
+        BootstrapMir.lower_assignment_target(mir_builder, statement["target"], value, statement["operator"]);
+        return none;
+    }
+    if op == "const" {
+        value = BootstrapMir.lower_expression(mir_builder, statement["value"]);
+        BootstrapMir.emit_effect(mir_builder, "store.const", [statement["name"], BootstrapMir.argument(value)]);
+        mir_builder["locals"][statement["name"]] = statement["type"];
+        return none;
+    }
+    if op == "return" {
+        arguments: list<dynamic> = [];
+        if statement["value"] != none {
+            value = BootstrapMir.lower_expression(mir_builder, statement["value"]);
+            push(arguments, BootstrapMir.argument(value));
+        }
+        BootstrapMir.terminate(mir_builder, "return", arguments, []);
+        return none;
+    }
+    if op == "if" {
+        condition = BootstrapMir.lower_expression(mir_builder, statement["condition"]);
+        then_block = BootstrapMir.new_block(mir_builder, "if.then");
+        else_block = BootstrapMir.new_block(mir_builder, "if.else");
+        merge_block = BootstrapMir.new_block(mir_builder, "if.merge");
+        BootstrapMir.terminate(mir_builder, "branch", [BootstrapMir.argument(condition)], [then_block["label"], else_block["label"]]);
+        BootstrapMir.switch_to(mir_builder, then_block);
+        BootstrapMir.lower_block(mir_builder, statement["then"]);
+        BootstrapMir.jump_if_open(mir_builder, merge_block);
+        BootstrapMir.switch_to(mir_builder, else_block);
+        BootstrapMir.lower_block(mir_builder, statement["else"]);
+        BootstrapMir.jump_if_open(mir_builder, merge_block);
+        BootstrapMir.switch_to(mir_builder, merge_block);
+        return none;
+    }
+    if op == "while" {
+        condition_block = BootstrapMir.new_block(mir_builder, "while.condition");
+        body_block = BootstrapMir.new_block(mir_builder, "while.body");
+        exit_block = BootstrapMir.new_block(mir_builder, "while.exit");
+        BootstrapMir.jump_if_open(mir_builder, condition_block);
+        BootstrapMir.switch_to(mir_builder, condition_block);
+        condition = BootstrapMir.lower_expression(mir_builder, statement["condition"]);
+        BootstrapMir.terminate(mir_builder, "branch", [BootstrapMir.argument(condition)], [body_block["label"], exit_block["label"]]);
+        BootstrapMir.switch_to(mir_builder, body_block);
+        push(mir_builder["loops"], {
+                "break": exit_block["label"],
+                "continue": condition_block["label"]
+            });
+        BootstrapMir.lower_block(mir_builder, statement["body"]);
+        pop(mir_builder["loops"]);
+        BootstrapMir.jump_if_open(mir_builder, condition_block);
+        BootstrapMir.switch_to(mir_builder, exit_block);
+        return none;
+    }
+    if op == "for" {
+        iterable = BootstrapMir.lower_expression(mir_builder, statement["iterable"]);
+        iterator = BootstrapMir.emit(mir_builder, "iter.begin", "iterator", [BootstrapMir.argument(iterable)]);
+        condition_block = BootstrapMir.new_block(mir_builder, "for.condition");
+        body_block = BootstrapMir.new_block(mir_builder, "for.body");
+        exit_block = BootstrapMir.new_block(mir_builder, "for.exit");
+        BootstrapMir.jump_if_open(mir_builder, condition_block);
+        BootstrapMir.switch_to(mir_builder, condition_block);
+        has_next = BootstrapMir.emit(mir_builder, "iter.has_next", "bool", [BootstrapMir.argument(iterator)]);
+        BootstrapMir.terminate(mir_builder, "branch", [BootstrapMir.argument(has_next)], [body_block["label"], exit_block["label"]]);
+        BootstrapMir.switch_to(mir_builder, body_block);
+        next_value = BootstrapMir.emit(mir_builder, "iter.next", "dynamic", [BootstrapMir.argument(iterator)]);
+        BootstrapMir.emit_effect(mir_builder, "store", [statement["name"], BootstrapMir.argument(next_value), "="]);
+        push(mir_builder["loops"], {
+                "break": exit_block["label"],
+                "continue": condition_block["label"]
+            });
+        BootstrapMir.lower_block(mir_builder, statement["body"]);
+        pop(mir_builder["loops"]);
+        BootstrapMir.jump_if_open(mir_builder, condition_block);
+        BootstrapMir.switch_to(mir_builder, exit_block);
+        return none;
+    }
+    if op == "throw" {
+        value = BootstrapMir.lower_expression(mir_builder, statement["value"]);
+        BootstrapMir.terminate(mir_builder, "throw", [BootstrapMir.argument(value)], []);
+        return none;
+    }
+    if op == "print" or op == "printnl" or op == "expression" {
+        value = BootstrapMir.lower_expression(mir_builder, statement["value"]);
+        BootstrapMir.emit_effect(mir_builder, op, [BootstrapMir.argument(value)]);
+        return none;
+    }
+    if op == "run" {
+        command = BootstrapMir.lower_expression(mir_builder, statement["command"]);
+        BootstrapMir.emit_effect(mir_builder, "run", [BootstrapMir.argument(command)]);
+        return none;
+    }
+    if op == "break" or op == "continue" {
+        if len(mir_builder["loops"]) == 0 {
+            throw "'{op}' used outside a loop during MIR lowering";
+        }
+        loop = last(mir_builder["loops"]);
+        BootstrapMir.terminate(mir_builder, "jump", [], [loop[op]]);
+        return none;
+    }
+    if op == "try" {
+        try_block = BootstrapMir.new_block(mir_builder, "try.body");
+        catch_block = BootstrapMir.new_block(mir_builder, "try.catch");
+        merge_block = BootstrapMir.new_block(mir_builder, "try.merge");
+        BootstrapMir.terminate(mir_builder, "try", [], [try_block["label"], catch_block["label"]]);
+        BootstrapMir.switch_to(mir_builder, try_block);
+        BootstrapMir.lower_block(mir_builder, statement["body"]);
+        BootstrapMir.jump_if_open(mir_builder, merge_block);
+        BootstrapMir.switch_to(mir_builder, catch_block);
+        if !statement["has_catch"] {
+            BootstrapMir.terminate(mir_builder, "rethrow", [], []);
+        } else {
+            if statement["catch_name"] != none {
+                exception = BootstrapMir.emit(mir_builder, "exception.current", "string", []);
+                BootstrapMir.emit_effect(mir_builder, "store", [statement["catch_name"], BootstrapMir.argument(exception), "="]);
+            }
+            BootstrapMir.lower_block(mir_builder, statement["catch_body"]);
+            BootstrapMir.jump_if_open(mir_builder, merge_block);
+        }
+        BootstrapMir.switch_to(mir_builder, merge_block);
+        return none;
+    }
+    BootstrapMir.emit_effect(mir_builder, "unknown.{op}", [statement]);
+    return none;
+}
+
+fn lower_block(mir_builder: dict<string, dynamic>, statements: list<dynamic>) -> none {
+    for statement in statements {
+        if !BootstrapMir.open(mir_builder) {
+            break;
+        }
+        BootstrapMir.lower_statement(mir_builder, statement);
+    }
+    return none;
+}
+
+fn finish_function(mir_builder: dict<string, dynamic>) -> none {
+    if BootstrapMir.open(mir_builder) {
+        if mir_builder["return_type"] == "none" or mir_builder["return_type"] == "dynamic" {
+            BootstrapMir.terminate(mir_builder, "return", [], []);
+        } else {
+            BootstrapMir.terminate(mir_builder, "unreachable", [], []);
+        }
+    }
+    return none;
+}
+
+fn lower_function(hir_function: dict<string, dynamic>) -> dict<string, dynamic> {
+    mir_builder = BootstrapMir.builder(hir_function["name"], hir_function["return_type"]);
+    for parameter in hir_function["parameters"] {
+        parameter_name: string = BootstrapParser.field(parameter, "name");
+        parameter_type: string = BootstrapChecker.normalize_type(BootstrapParser.field(parameter, "type"));
+        mir_builder["locals"][parameter_name] = parameter_type;
+    }
+    BootstrapMir.lower_block(mir_builder, hir_function["body"]);
+    BootstrapMir.finish_function(mir_builder);
+    return {
+            "name": hir_function["name"],
+            "parameters": hir_function["parameters"],
+            "return_type": hir_function["return_type"],
+            "blocks": mir_builder["blocks"]
+        };
+}
+
+fn lower_hir(hir_program: dict<string, dynamic>) -> dict<string, dynamic> {
+    mir_program: dict<string, dynamic> = {
+            "op": "program",
+            "version": "mako.mir 1",
+            "structs": hir_program["structs"],
+            "globals": hir_program["globals"],
+            "functions": []
+        };
+    for hir_function in hir_program["functions"] {
+        push(mir_program["functions"], BootstrapMir.lower_function(hir_function));
+    }
+    main_function: dict<string, dynamic> = {
+            "name": "main",
+            "parameters": [],
+            "return_type": "none",
+            "body": hir_program["main"]
+        };
+    push(mir_program["functions"], BootstrapMir.lower_function(main_function));
+    return mir_program;
+}
+
+fn validate_function(function: dict<string, dynamic>) -> list<string> {
+    issues: list<string> = [];
+    labels: dict<string, dynamic> = {};
+    definitions: dict<string, dynamic> = {};
+    for block in function["blocks"] {
+        if has(labels, block["label"]) {
+            push(issues, "duplicate MIR block '{block["label"]}'");
+        }
+        labels[block["label"]] = true;
+        for instruction in block["instructions"] {
+            if instruction["result"] != none {
+                if has(definitions, instruction["result"]) {
+                    push(issues, "temporary '{instruction["result"]}' is defined twice");
+                }
+                definitions[instruction["result"]] = true;
+            }
+        }
+        if block["terminator"] == none {
+            push(issues, "MIR block '{block["label"]}' has no terminator");
+        }
+    }
+    for block in function["blocks"] {
+        for instruction in block["instructions"] {
+            for argument in instruction["arguments"] {
+                if type(argument) == "dict" and has(argument, "value") and type(argument["value"]) == "string" and starts_with(argument["value"], "%") and !has(definitions, argument["value"]) {
+                    push(issues, "instruction '{instruction["op"]}' uses undefined temporary '{argument["value"]}'");
+                }
+            }
+        }
+        if block["terminator"] != none {
+            terminator_op: string = block["terminator"]["op"];
+            target_count: number = len(block["terminator"]["targets"]);
+            if terminator_op == "branch" and target_count != 2 {
+                push(issues, "branch in '{block["label"]}' must have two targets");
+            }
+            if terminator_op == "jump" and target_count != 1 {
+                push(issues, "jump in '{block["label"]}' must have one target");
+            }
+            if terminator_op == "try" and target_count != 2 {
+                push(issues, "try in '{block["label"]}' must have body and catch targets");
+            }
+            if terminator_op == "return" or terminator_op == "throw" or terminator_op == "rethrow" or terminator_op == "unreachable" and target_count != 0 {
+                push(issues, "terminator '{terminator_op}' in '{block["label"]}' cannot have targets");
+            }
+            for argument in block["terminator"]["arguments"] {
+                if type(argument) == "dict" and has(argument, "value") and type(argument["value"]) == "string" and starts_with(argument["value"], "%") and !has(definitions, argument["value"]) {
+                    push(issues, "terminator '{block["terminator"]["op"]}' uses undefined temporary '{argument["value"]}'");
+                }
+            }
+            for target in block["terminator"]["targets"] {
+                if !has(labels, target) {
+                    push(issues, "MIR block '{block["label"]}' targets missing block '{target}'");
+                }
+            }
+        }
+    }
+    return issues;
+}
+
+fn validate(program: dict<string, dynamic>) -> list<string> {
+    issues: list<string> = [];
+    for function in program["functions"] {
+        for issue in BootstrapMir.validate_function(function) {
+            push(issues, "{function["name"]}: {issue}");
+        }
+    }
+    return issues;
+}
+
+fn lower(source: string) -> dict<string, dynamic> {
+    program = BootstrapMir.lower_hir(BootstrapHir.lower(source));
+    issues: list<string> = BootstrapMir.validate(program);
+    if len(issues) > 0 {
+        throw "invalid generated MIR: {join(issues, "; ")}";
+    }
+    return program;
+}
+
+fn emit_json(source: string) -> string {
+    return json_encode(BootstrapMir.lower(source));
+}

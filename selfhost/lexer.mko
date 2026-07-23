@@ -1,0 +1,409 @@
+namespace BootstrapLexer;
+
+use "runtime.mko";
+
+# Tokens are records with these fields:
+# kind, value, line, col, end_line, end_col.
+# A later native runtime may replace the dictionary representation while
+# preserving these constructor/accessor functions.
+fn token(kind: string, value: string, line: usize, col: usize, end_line: usize, end_col: usize) -> dict<string, dynamic> {
+    result: dict<string, dynamic> = {
+            "kind": kind,
+            "value": value,
+            "line": line,
+            "col": col,
+            "end_line": end_line,
+            "end_col": end_col
+        };
+    return result;
+}
+
+fn kind(token_value: dict<string, dynamic>) -> string {
+    return token_value["kind"];
+}
+
+fn value(token_value: dict<string, dynamic>) -> string {
+    return token_value["value"];
+}
+
+fn line(token_value: dict<string, dynamic>) -> usize {
+    return token_value["line"];
+}
+
+fn col(token_value: dict<string, dynamic>) -> usize {
+    return token_value["col"];
+}
+
+fn end_line(token_value: dict<string, dynamic>) -> usize {
+    return token_value["end_line"];
+}
+
+fn end_col(token_value: dict<string, dynamic>) -> usize {
+    return token_value["end_col"];
+}
+
+fn state(source: string, start_line: usize, start_col: usize) -> dict<string, dynamic> {
+    lexer_state: dict<string, dynamic> = {
+            "source": source,
+            "pos": 0,
+            "line": start_line,
+            "line_start": 0,
+            "start_line": start_line,
+            "col_base": start_col - 1
+        };
+    return lexer_state;
+}
+
+fn current_col(lexer_state: dict<string, dynamic>) -> usize {
+    extra: usize = 0;
+    if lexer_state["line"] == lexer_state["start_line"] {
+        extra = lexer_state["col_base"];
+    }
+    return lexer_state["pos"] - lexer_state["line_start"] + 1 + extra;
+}
+
+fn peek(lexer_state: dict<string, dynamic>, offset: usize) -> string {
+    position: usize = lexer_state["pos"] + offset;
+    if position >= len(lexer_state["source"]) {
+        return "";
+    }
+    return lexer_state["source"][position];
+}
+
+fn emit(lexer_state: dict<string, dynamic>, kind: string, value: string, line: usize, col: usize) -> dict<string, dynamic> {
+    return BootstrapLexer.token(kind, value, line, col, lexer_state["line"], BootstrapLexer.current_col(lexer_state));
+}
+
+fn fail(message: string, line: usize, col: usize) -> none {
+    throw "{line}:{col}: {message}";
+}
+
+fn keyword_kind(word: string) -> string {
+    keywords: dict<string, dynamic> = {
+            "script": "Script",
+            "namespace": "Namespace",
+            "main": "Main",
+            "const": "Const",
+            "print": "Print",
+            "printnl": "Printnl",
+            "input": "Input",
+            "if": "If",
+            "else": "Else",
+            "while": "While",
+            "for": "For",
+            "in": "In",
+            "break": "Break",
+            "continue": "Continue",
+            "fn": "Fn",
+            "return": "Return",
+            "struct": "Struct",
+            "run": "Run",
+            "and": "And",
+            "or": "Or",
+            "not": "Not",
+            "using": "Using",
+            "use": "Use",
+            "from": "From",
+            "try": "Try",
+            "catch": "Catch",
+            "throw": "Throw",
+            "true": "True",
+            "false": "False",
+            "none": "None"
+        };
+    return get(keywords, word, "Identifier");
+}
+
+fn unescape(character: string) -> string {
+    if character == "n" {
+        return "\n";
+    }
+    if character == "t" {
+        return "\t";
+    }
+    if character == "r" {
+        return "\r";
+    }
+    if character == "\"" {
+        return "\"";
+    }
+    if character == "\\" {
+        return "\\";
+    }
+    return character;
+}
+
+fn trim_comment_end(text: string) -> string {
+    end: number = len(text);
+    while end > 0 {
+        character: string = text[end - 1];
+        if character != " " and character != "\t" and character != "\r" {
+            break;
+        }
+        end = end - 1;
+    }
+    return slice(text, 0, end);
+}
+
+fn skip_whitespace(lexer_state: dict<string, dynamic>, tokens: list<dict<string, dynamic>>) -> none {
+    source: string = lexer_state["source"];
+    while lexer_state["pos"] < len(source) {
+        character: string = BootstrapLexer.peek(lexer_state, 0);
+        if character == "\n" {
+            lexer_state["line"] = lexer_state["line"] + 1;
+            lexer_state["pos"] = lexer_state["pos"] + 1;
+            lexer_state["line_start"] = lexer_state["pos"];
+            continue;
+        }
+        if BootstrapRuntime.is_space(character) {
+            lexer_state["pos"] = lexer_state["pos"] + 1;
+            continue;
+        }
+        next: string = BootstrapLexer.peek(lexer_state, 1);
+        if character == "#" or (character == "/" and next == "/") {
+            comment_line: usize = lexer_state["line"];
+            comment_col: usize = BootstrapLexer.current_col(lexer_state);
+            start: usize = lexer_state["pos"] + 1;
+            if character == "/" {
+                start = start + 1;
+            }
+            while lexer_state["pos"] < len(source) and BootstrapLexer.peek(lexer_state, 0) != "\n" {
+                lexer_state["pos"] = lexer_state["pos"] + 1;
+            }
+            text: string = BootstrapLexer.trim_comment_end(slice(source, start, lexer_state["pos"]));
+            push(tokens, BootstrapLexer.emit(lexer_state, "Comment", text, comment_line, comment_col));
+            continue;
+        }
+        if character == "/" and next == "*" {
+            open_line: usize = lexer_state["line"];
+            open_col: usize = BootstrapLexer.current_col(lexer_state);
+            lexer_state["pos"] = lexer_state["pos"] + 2;
+            closed: bool = false;
+            while lexer_state["pos"] < len(source) {
+                character = BootstrapLexer.peek(lexer_state, 0);
+                if character == "\n" {
+                    lexer_state["line"] = lexer_state["line"] + 1;
+                    lexer_state["line_start"] = lexer_state["pos"] + 1;
+                }
+                if character == "*" and BootstrapLexer.peek(lexer_state, 1) == "/" {
+                    lexer_state["pos"] = lexer_state["pos"] + 2;
+                    closed = true;
+                    break;
+                }
+                lexer_state["pos"] = lexer_state["pos"] + 1;
+            }
+            if !closed {
+                BootstrapLexer.fail("missing '*/' to close comment (got end of file)", open_line, open_col);
+            }
+            continue;
+        }
+        break;
+    }
+    return none;
+}
+
+fn read_identifier(lexer_state: dict<string, dynamic>, line: usize, col: usize) -> dict<string, dynamic> {
+    source: string = lexer_state["source"];
+    start: usize = lexer_state["pos"];
+    while lexer_state["pos"] < len(source) and BootstrapRuntime.is_identifier_continue(BootstrapLexer.peek(lexer_state, 0)) {
+        lexer_state["pos"] = lexer_state["pos"] + 1;
+    }
+    word: string = slice(source, start, lexer_state["pos"]);
+    return BootstrapLexer.emit(lexer_state, BootstrapLexer.keyword_kind(word), word, line, col);
+}
+
+fn read_number(lexer_state: dict<string, dynamic>, line: usize, col: usize) -> dict<string, dynamic> {
+    source: string = lexer_state["source"];
+    start: usize = lexer_state["pos"];
+    dots: usize = 0;
+    while lexer_state["pos"] < len(source) {
+        character: string = BootstrapLexer.peek(lexer_state, 0);
+        if !BootstrapRuntime.is_digit(character) and character != "." {
+            break;
+        }
+        if character == "." {
+            dots = dots + 1;
+        }
+        lexer_state["pos"] = lexer_state["pos"] + 1;
+    }
+    text: string = slice(source, start, lexer_state["pos"]);
+    if dots > 1 {
+        BootstrapLexer.fail("invalid number '{text}' (more than one decimal point)", line, col);
+    }
+    if lexer_state["pos"] < len(source) and BootstrapRuntime.is_identifier_start(BootstrapLexer.peek(lexer_state, 0)) {
+        while lexer_state["pos"] < len(source) and BootstrapRuntime.is_identifier_continue(BootstrapLexer.peek(lexer_state, 0)) {
+            lexer_state["pos"] = lexer_state["pos"] + 1;
+        }
+        full: string = slice(source, start, lexer_state["pos"]);
+        BootstrapLexer.fail("invalid name '{full}' (names cannot start with a digit)", line, col);
+    }
+    return BootstrapLexer.emit(lexer_state, "Number", text, line, col);
+}
+
+fn read_string(lexer_state: dict<string, dynamic>, line: usize, col: usize) -> dict<string, dynamic> {
+    source: string = lexer_state["source"];
+    lexer_state["pos"] = lexer_state["pos"] + 1;
+    content_start: usize = lexer_state["pos"];
+    buffer: list<string> = BootstrapRuntime.text_buffer();
+    template: bool = false;
+    brace_depth: usize = 0;
+    while lexer_state["pos"] < len(source) and (brace_depth > 0 or BootstrapLexer.peek(lexer_state, 0) != "\"") {
+        character: string = BootstrapLexer.peek(lexer_state, 0);
+        next: string = BootstrapLexer.peek(lexer_state, 1);
+        if brace_depth == 0 {
+            if character == "{{" and next == "{{" {
+                BootstrapRuntime.text_append_char(buffer, "{{");
+                lexer_state["pos"] = lexer_state["pos"] + 2;
+                continue;
+            }
+            if character == "}}" and next == "}}" {
+                BootstrapRuntime.text_append_char(buffer, "}}");
+                lexer_state["pos"] = lexer_state["pos"] + 2;
+                continue;
+            }
+            if character == "{{" {
+                template = true;
+                brace_depth = brace_depth + 1;
+                lexer_state["pos"] = lexer_state["pos"] + 1;
+                continue;
+            }
+            if character == "\\" and lexer_state["pos"] + 1 < len(source) {
+                BootstrapRuntime.text_append(buffer, BootstrapLexer.unescape(next));
+                lexer_state["pos"] = lexer_state["pos"] + 2;
+                continue;
+            }
+            if character == "\n" {
+                BootstrapLexer.fail("missing closing '\"' (got end of line)", line, BootstrapLexer.current_col(lexer_state));
+            }
+            BootstrapRuntime.text_append(buffer, character);
+            lexer_state["pos"] = lexer_state["pos"] + 1;
+            continue;
+        }
+        # Inside interpolation, skip nested strings as opaque source.
+        if character == "\"" {
+            lexer_state["pos"] = lexer_state["pos"] + 1;
+            while lexer_state["pos"] < len(source) and BootstrapLexer.peek(lexer_state, 0) != "\"" {
+                if BootstrapLexer.peek(lexer_state, 0) == "\\" and lexer_state["pos"] + 1 < len(source) {
+                    lexer_state["pos"] = lexer_state["pos"] + 1;
+                }
+                if BootstrapLexer.peek(lexer_state, 0) == "\n" {
+                    lexer_state["line"] = lexer_state["line"] + 1;
+                    lexer_state["line_start"] = lexer_state["pos"] + 1;
+                }
+                lexer_state["pos"] = lexer_state["pos"] + 1;
+            }
+            if lexer_state["pos"] < len(source) {
+                lexer_state["pos"] = lexer_state["pos"] + 1;
+            }
+            continue;
+        }
+        if character == "{{" {
+            brace_depth = brace_depth + 1;
+        }
+        if character == "}}" {
+            brace_depth = brace_depth - 1;
+        }
+        if character == "\n" {
+            lexer_state["line"] = lexer_state["line"] + 1;
+            lexer_state["line_start"] = lexer_state["pos"] + 1;
+        }
+        lexer_state["pos"] = lexer_state["pos"] + 1;
+    }
+    if lexer_state["pos"] >= len(source) {
+        BootstrapLexer.fail("missing closing '\"' (got end of file)", line, BootstrapLexer.current_col(lexer_state));
+    }
+    content_end: usize = lexer_state["pos"];
+    lexer_state["pos"] = lexer_state["pos"] + 1;
+    if template {
+        return BootstrapLexer.emit(lexer_state, "TemplateString", slice(source, content_start, content_end), line, col);
+    }
+    return BootstrapLexer.emit(lexer_state, "String", BootstrapRuntime.text_finish(buffer), line, col);
+}
+
+fn read_token(lexer_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    line: usize = lexer_state["line"];
+    col: usize = BootstrapLexer.current_col(lexer_state);
+    character: string = BootstrapLexer.peek(lexer_state, 0);
+    if character == "\"" {
+        return BootstrapLexer.read_string(lexer_state, line, col);
+    }
+    if BootstrapRuntime.is_digit(character) {
+        return BootstrapLexer.read_number(lexer_state, line, col);
+    }
+    if BootstrapRuntime.is_identifier_start(character) {
+        return BootstrapLexer.read_identifier(lexer_state, line, col);
+    }
+    next: string = BootstrapLexer.peek(lexer_state, 1);
+    pair: string = character + next;
+    pairs: dict<string, dynamic> = {
+            "=>": "Arrow",
+            "->": "ThinArrow",
+            "==": "EqEq",
+            "!=": "NotEq",
+            "<=": "LtEq",
+            ">=": "GtEq",
+            "+=": "PlusEq",
+            "-=": "MinusEq",
+            "*=": "StarEq",
+            "/=": "SlashEq"
+        };
+    if has(pairs, pair) {
+        lexer_state["pos"] = lexer_state["pos"] + 2;
+        return BootstrapLexer.emit(lexer_state, pairs[pair], pair, line, col);
+    }
+    singles: dict<string, dynamic> = {
+            "=": "Assign",
+            "+": "Plus",
+            "-": "Minus",
+            "*": "Star",
+            "/": "Slash",
+            "%": "Percent",
+            "<": "Lt",
+            ">": "Gt",
+            "!": "Bang",
+            ".": "Dot",
+            "(": "LParen",
+            ")": "RParen",
+            "{{": "LBrace",
+            "}}": "RBrace",
+            "[": "LBracket",
+            "]": "RBracket",
+            ";": "Semicolon",
+            ",": "Comma",
+            ":": "Colon"
+        };
+    if has(singles, character) {
+        lexer_state["pos"] = lexer_state["pos"] + 1;
+        return BootstrapLexer.emit(lexer_state, singles[character], character, line, col);
+    }
+    hint: string = "";
+    if character == "&" {
+        hint = " — use 'and' for logical and";
+    }
+    if character == "|" {
+        hint = " — use 'or' for logical or";
+    }
+    if character == "'" {
+        hint = " — strings use double quotes, e.g. \"text\"";
+    }
+    BootstrapLexer.fail("unexpected character '{character}'{hint}", line, col);
+    return BootstrapLexer.emit(lexer_state, "Eof", "", line, col);
+}
+
+fn lex_at(source: string, start_line: usize, start_col: usize) -> list<dict<string, dynamic>> {
+    lexer_state: dict<string, dynamic> = BootstrapLexer.state(source, start_line, start_col);
+    tokens: list<dict<string, dynamic>> = [];
+    while true {
+        BootstrapLexer.skip_whitespace(lexer_state, tokens);
+        if lexer_state["pos"] >= len(source) {
+            push(tokens, BootstrapLexer.emit(lexer_state, "Eof", "", lexer_state["line"], BootstrapLexer.current_col(lexer_state)));
+            break;
+        }
+        push(tokens, BootstrapLexer.read_token(lexer_state));
+    }
+    return tokens;
+}
+
+fn lex(source: string) -> list<dict<string, dynamic>> {
+    return BootstrapLexer.lex_at(source, 1, 1);
+}

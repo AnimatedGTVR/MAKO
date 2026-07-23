@@ -1,0 +1,56 @@
+use "../selfhost/runtime.mko";
+use "../selfhost/lexer.mko";
+use "../selfhost/parser.mko";
+use "../selfhost/checker.mko";
+use "../selfhost/hir.mko";
+use "../selfhost/mir.mko";
+use "../selfhost/optimizer.mko";
+
+fn count_blocks(function, prefix) {
+    count = 0;
+    for block in function["blocks"] {
+        if starts_with(block["label"], prefix) {
+            count = count + 1;
+        }
+    }
+    return count;
+}
+
+fn has_const(function, value) {
+    for block in function["blocks"] {
+        for instruction in block["instructions"] {
+            if instruction["op"] == "const" and instruction["arguments"][0] == value {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+main() {
+    optimizer_test_source = "fn folded() -> i32 {{\n" + "    if 1 + 2 == 3 {{\n" + "        return 10 * 2;\n" + "    }} else {{\n" + "        return 99;\n" + "    }}\n" + "}}\n" + "main() {{\n" + "    value: i32 = folded();\n" + "}}\n";
+    unoptimized = BootstrapMir.lower(optimizer_test_source);
+    folded_function = unoptimized["functions"][0];
+    assert(folded_function["blocks"][0]["terminator"]["op"] == "branch", "unoptimized branch");
+    assert(count_blocks(folded_function, "if.else") == 1, "unoptimized else block");
+    optimized = BootstrapOptimizer.lower_optimized(optimizer_test_source);
+    assert(len(BootstrapMir.validate(optimized)) == 0, "optimized MIR validates");
+    folded_function = optimized["functions"][0];
+    assert(folded_function["blocks"][0]["terminator"]["op"] == "jump", "constant branch simplified");
+    assert(count_blocks(folded_function, "if.else") == 0, "unreachable else removed");
+    assert(has_const(folded_function, 20), "arithmetic folded");
+    # Inject a valid but unused pure definition and ensure DCE removes it.
+    with_dead = BootstrapMir.lower(optimizer_test_source);
+    push(with_dead["functions"][1]["blocks"][0]["instructions"], {
+            "result": "%dead",
+            "type": "i32",
+            "op": "const",
+            "arguments": [123]
+        });
+    assert(len(BootstrapMir.validate(with_dead)) == 0, "injected MIR remains valid");
+    BootstrapOptimizer.optimize(with_dead);
+    assert(!contains(json_encode(with_dead), "%dead"), "dead pure instruction removed");
+    encoded = BootstrapOptimizer.emit_json(optimizer_test_source);
+    assert(contains(encoded, "\"version\":\"mako.mir 1\""), "optimized MIR JSON emission");
+    print "MAKO self-host optimizer tests pass!";
+}

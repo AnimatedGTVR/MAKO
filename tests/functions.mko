@@ -7,7 +7,9 @@ fn no_return() {
 }
 
 fn factorial(n) {
-    if n <= 1 { return 1; }
+    if n <= 1 {
+        return 1;
+    }
     return n * factorial(n - 1);
 }
 
@@ -15,36 +17,62 @@ fn make_counter_start() {
     return 0;
 }
 
+fn scope_inner() {
+    value = "inner";
+    return value;
+}
+
+fn scope_outer() {
+    value = "outer";
+    scope_inner();
+    return value;
+}
+
+fn read_callers_local() {
+    return callers_local;
+}
+
+fn caller_with_local() {
+    callers_local = "private";
+    return read_callers_local();
+}
+
 main() {
     assert(add(2, 3) == 5, "basic call");
     assert(no_return() == none, "implicit none return");
     assert(factorial(5) == 120, "recursion");
     assert(factorial(1) == 1, "recursion base case");
-
     # Lambdas — arrow form
     square = fn(x) => x * x;
     assert(square(5) == 25, "arrow lambda");
-
     # Lambdas — block form
     describe = fn(x) {
-        if x > 0 { return "positive"; }
+        if x > 0 {
+            return "positive";
+        }
         return "non-positive";
     };
     assert(describe(5) == "positive", "block lambda true branch");
     assert(describe(0) == "non-positive", "block lambda false branch");
-
     # Closures capture surrounding scope
     base = 10;
     add_base = fn(x) => x + base;
     assert(add_base(5) == 15, "closure captures variable");
-
     base = 100;
     assert(add_base(5) == 15, "closure captured by value at creation, not live reference");
-
     # Passing lambdas as values
-    apply_twice = fn(f, x) { return f(f(x)); };
+    apply_twice = fn(f, x) => f(f(x));
     assert(apply_twice(fn(n) => n + 1, 5) == 7, "lambda as argument");
-
     # Functions calling functions
     assert(add(add(1, 2), 3) == 6, "function calling function");
+    # A callee owns an isolated local frame. Matching local names must not
+    # overwrite the caller, and caller locals are not dynamically visible.
+    assert(scope_outer() == "outer", "callee locals do not overwrite caller locals");
+    caught_scope_error = false;
+    try {
+        caller_with_local();
+    } catch err {
+        caught_scope_error = contains(err, "unknown variable 'callers_local'");
+    }
+    assert(caught_scope_error, "callee cannot read caller locals");
 }

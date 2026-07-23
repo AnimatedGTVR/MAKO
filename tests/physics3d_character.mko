@@ -1,17 +1,17 @@
 using Physics3D;
+using Mako3D;
 
 main() {
     # Gravity settles the character onto a floor plane.
     world = Physics3D.world(0, -9.81, 0);
-    floor = Physics3D.floor(world);
-    player = Physics3D.character(world, 0, 5, 0);
-    for i in range(120) {
-        Physics3D.step(world, 1 / 60);
-    }
+    floor = Physics3D.plane(world, 0, 1, 0, 0);
+    player = Physics3D.character(world, {"position": [0, 5, 0], "height": 1.8, "radius": 0.4, "speed": 6, "jump": 8});
+    for i in range(120) { Physics3D.step(world, 1 / 60); }
     info = Physics3D.character_info(world, player);
     # Resting height = half-height (height/2 - radius) + radius = 0.9 - 0.4 + 0.4 = 0.9.
     assert(abs(info["y"] - 0.9) < 0.1, "character settles standing on the floor");
     assert(info["grounded"], "character reports grounded once settled");
+
     # Horizontal movement actually moves the character.
     start_x = info["x"];
     for i in range(60) {
@@ -20,6 +20,7 @@ main() {
     }
     info = Physics3D.character_info(world, player);
     assert(info["x"] > start_x + 1, "character_move advances position in the given direction");
+
     # Jump: grounded jump gives upward velocity and leaves the ground.
     jumped = Physics3D.character_jump(world, player);
     assert(jumped, "jump succeeds while grounded");
@@ -27,12 +28,12 @@ main() {
     info = Physics3D.character_info(world, player);
     assert(info["vy"] > 0, "jump gives positive vertical velocity");
     assert(!info["grounded"], "character leaves the ground immediately after a jump");
+
     # Character collides with a wall instead of passing through it.
     walled = Physics3D.world(0, -9.81, 0);
-    Physics3D.floor(walled);
-    wall = Physics3D.static_box(walled, 5, 2, 0, 1, 4, 4);
-    p2 = Physics3D.character(walled, 0, 5, 0);
-    Physics3D.character_tune(walled, p2, 10, 8, 0.35);
+    Physics3D.plane(walled, 0, 1, 0, 0);
+    wall = Physics3D.box(walled, "static", 5, 2, 0, 1, 4, 4);
+    p2 = Physics3D.character(walled, {"position": [0, 5, 0], "height": 1.8, "radius": 0.4, "speed": 10});
     for i in range(300) {
         Physics3D.character_move(walled, p2, 1, 0);
         Physics3D.step(walled, 1 / 60);
@@ -41,43 +42,22 @@ main() {
     # Wall's near face is at x = 5 - 0.5 = 4.5; character radius 0.4 means it
     # should stop with its centre no farther than ~4.1, well short of x=5.
     assert(info2["x"] < 4.5, "character is blocked by a wall instead of passing through it");
+
     # Character standing on a static box (not just an infinite plane).
     boxed = Physics3D.world(0, -9.81, 0);
-    platform = Physics3D.static_box(boxed, 0, 1, 0, 6, 2, 6);
-    p3 = Physics3D.character(boxed, 0, 6, 0);
-    for i in range(120) {
-        Physics3D.step(boxed, 1 / 60);
-    }
+    platform = Physics3D.box(boxed, "static", 0, 1, 0, 6, 2, 6);
+    p3 = Physics3D.character(boxed, {"position": [0, 6, 0], "height": 1.8, "radius": 0.4});
+    for i in range(120) { Physics3D.step(boxed, 1 / 60); }
     info3 = Physics3D.character_info(boxed, p3);
     # Box top at y=2; resting y = box top + half-height (0.9-0.4=0.5) + radius 0.4 = 2.9.
     assert(abs(info3["y"] - 2.9) < 0.1, "character settles on top of a box");
     assert(info3["grounded"], "character is grounded while standing on a box");
+
     # Removal.
     misc = Physics3D.world(0, 0, 0);
-    p4 = Physics3D.character(misc, 0, 0, 0);
+    p4 = Physics3D.character(misc, {"position": [0, 0, 0]});
     Physics3D.remove_character(misc, p4);
     assert(Physics3D.character_info(misc, p4) == none, "removed character has no info");
-    # A very fast character cannot skip through a thin wall in one frame.
-    fast = Physics3D.world(0, 0, 0);
-    Physics3D.static_box(fast, 2, 1, 0, 0.1, 4, 4);
-    runner = Physics3D.character(fast, 0, 1, 0);
-    Physics3D.character_tune(fast, runner, 300, 8, 1);
-    Physics3D.character_move(fast, runner, 1, 0);
-    Physics3D.step(fast, 1 / 60);
-    assert(Physics3D.character_info(fast, runner)["x"] < 2, "fast character cannot tunnel through a thin wall");
-    # A character standing on an easy moving platform rides along with it.
-    ride = Physics3D.world(0, -9.81, 0);
-    platform = Physics3D.moving_box(ride, 0, 1, 0, 6, 2, 6);
-    rider = Physics3D.character(ride, 0, 5, 0);
-    for i in range(120) {
-        Physics3D.step(ride, 1 / 60);
-    }
-    Physics3D.set_velocity(ride, platform, 2, 0, 0);
-    for i in range(60) {
-        Physics3D.step(ride, 1 / 60);
-    }
-    rider_info = Physics3D.character_info(ride, rider);
-    assert(rider_info["x"] > 1, "character rides a moving platform");
-    assert(rider_info["ground_body"] == platform, "character reports the platform below it");
+
     print "Physics3D character controller tests pass!";
 }

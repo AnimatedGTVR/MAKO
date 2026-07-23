@@ -212,6 +212,10 @@ mko: error (line 4): function 'greeet' wasn't found
 | `mko list`                                  | List installed packages                 |
 | `mko cache clear`                           | Clear the package cache                 |
 
+MAKO's compiler is beginning its bootstrap into MAKO itself. See the
+[self-hosting plan](docs/self-hosting.md) and the first hosted runtime module in
+[`selfhost/runtime.mko`](selfhost/runtime.mko).
+
 Packages can come from GitHub:
 
 ```mako

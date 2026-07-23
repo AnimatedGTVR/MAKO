@@ -1,0 +1,36 @@
+use "../selfhost/runtime.mko";
+use "../selfhost/lexer.mko";
+use "../selfhost/parser.mko";
+use "../selfhost/checker.mko";
+use "../selfhost/hir.mko";
+
+main() {
+    hir_test_source = "struct Point {{ x: i32, y: i32 }}\n" + "const LIMIT = 10;\n" + "fn score(point: Point, bonus: i32) -> i32 {{\n" + "    if bonus > 0 {{\n" + "        return point.x + bonus * 2;\n" + "    }} else {{\n" + "        return point.y;\n" + "    }}\n" + "}}\n" + "main() {{\n" + "    point: Point = Point {{ x: 3, y: 4 }};\n" + "    values: list<u8> = [1, 2, 3];\n" + "    result: i32 = score(point, values[0]);\n" + "    print \"score={{result}}\";\n" + "}}\n";
+    hir = BootstrapHir.lower(hir_test_source);
+    assert(hir["version"] == "mako.hir 1", "HIR version");
+    assert(len(hir["globals"]) == 1, "HIR global");
+    assert(hir["globals"][0]["type"] == "integer_literal", "inferred global type");
+    assert(len(hir["functions"]) == 1, "HIR function");
+    function = hir["functions"][0];
+    assert(function["return_type"] == "i32", "function return type");
+    assert(function["body"][0]["op"] == "if", "structured if");
+    returned = function["body"][0]["then"][0]["value"];
+    assert(returned["type"] == "i32", "typed returned expression");
+    assert(returned["right"]["operator"] == "*", "precedence preserved");
+    main_body = hir["main"];
+    assert(main_body[0]["type"] == "Point", "typed struct binding");
+    assert(main_body[1]["type"] == "list<u8>", "typed list binding");
+    assert(main_body[2]["value"]["op"] == "call", "call lowering");
+    assert(main_body[2]["value"]["type"] == "i32", "typed call");
+    assert(main_body[3]["value"]["op"] == "template", "template lowering");
+    encoded = BootstrapHir.emit_json(hir_test_source);
+    assert(contains(encoded, "\"version\":\"mako.hir 1\""), "deterministic JSON emission");
+    failed = false;
+    try {
+        BootstrapHir.lower("main() {{ value: u8 = 300; }}");
+    } catch error {
+        failed = contains(error, "cannot lower invalid program");
+    }
+    assert(failed, "invalid program rejected before HIR");
+    print "MAKO self-host HIR tests pass!";
+}

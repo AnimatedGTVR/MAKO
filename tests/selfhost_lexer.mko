@@ -1,0 +1,66 @@
+use "../selfhost/runtime.mko";
+use "../selfhost/lexer.mko";
+
+fn kinds(tokens) {
+    result = [];
+    for token in tokens {
+        push(result, BootstrapLexer.kind(token));
+    }
+    return result;
+}
+
+main() {
+    source = "const answer: u8 = 42;\nprint \"value={{answer}}\"; # tail";
+    tokens = BootstrapLexer.lex(source);
+    expected = ["Const", "Identifier", "Colon", "Identifier", "Assign", "Number", "Semicolon", "Print", "TemplateString", "Semicolon", "Comment", "Eof"];
+    assert(json_encode(kinds(tokens)) == json_encode(expected), "representative token kinds");
+    assert(BootstrapLexer.value(tokens[1]) == "answer", "identifier value");
+    assert(BootstrapLexer.value(tokens[5]) == "42", "number source value");
+    assert(BootstrapLexer.value(tokens[8]) == "value={{answer}}", "template source value");
+    assert(BootstrapLexer.value(tokens[10]) == " tail", "comment value");
+    assert(BootstrapLexer.line(tokens[7]) == 2, "second-line position");
+    assert(BootstrapLexer.col(tokens[7]) == 1, "second-line column");
+    operators = BootstrapLexer.lex("=> -> == != <= >= += -= *= /= = + - * / % < > ! . ( ) {{ }} [ ] ; , :");
+    assert(json_encode(kinds(operators)) == json_encode(["Arrow", "ThinArrow", "EqEq", "NotEq", "LtEq", "GtEq", "PlusEq", "MinusEq", "StarEq", "SlashEq", "Assign", "Plus", "Minus", "Star", "Slash", "Percent", "Lt", "Gt", "Bang", "Dot", "LParen", "RParen", "LBrace", "RBrace", "LBracket", "RBracket", "Semicolon", "Comma", "Colon", "Eof"]), "all operators and punctuation");
+    strings = BootstrapLexer.lex("\"line\\nnext\" \"{{{{brace}}}}\" \"{{d[\"key\"]}}\"");
+    assert(BootstrapLexer.kind(strings[0]) == "String", "plain string kind");
+    assert(BootstrapLexer.value(strings[0]) == "line\nnext", "string escapes");
+    assert(BootstrapLexer.value(strings[1]) == "{{brace}}", "escaped braces");
+    assert(BootstrapLexer.kind(strings[2]) == "TemplateString", "nested template string");
+    comments = BootstrapLexer.lex("# one\n// two\n/* three\nfour */main");
+    assert(json_encode(kinds(comments)) == json_encode(["Comment", "Comment", "Main", "Eof"]), "comment handling");
+    assert(BootstrapLexer.line(comments[2]) == 4, "block comment line tracking");
+    offset = BootstrapLexer.lex_at("name", 8, 12);
+    assert(BootstrapLexer.line(offset[0]) == 8, "offset line");
+    assert(BootstrapLexer.col(offset[0]) == 12, "offset column");
+    assert(BootstrapLexer.end_col(offset[0]) == 16, "exclusive end column");
+    failed = false;
+    try {
+        BootstrapLexer.lex("12abc");
+    } catch error {
+        failed = contains(error, "names cannot start with a digit");
+    }
+    assert(failed, "invalid leading digit diagnostic");
+    failed = false;
+    try {
+        BootstrapLexer.lex("1.2.3");
+    } catch error {
+        failed = contains(error, "more than one decimal point");
+    }
+    assert(failed, "invalid decimal diagnostic");
+    failed = false;
+    try {
+        BootstrapLexer.lex("&");
+    } catch error {
+        failed = contains(error, "use 'and'");
+    }
+    assert(failed, "unexpected character hint");
+    failed = false;
+    try {
+        BootstrapLexer.lex("/* open");
+    } catch error {
+        failed = contains(error, "missing '*/'");
+    }
+    assert(failed, "unterminated block comment diagnostic");
+    print "MAKO self-host lexer tests pass!";
+}

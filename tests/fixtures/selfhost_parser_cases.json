@@ -1,0 +1,20 @@
+[
+  {
+    "name": "multiplication binds before addition",
+    "source": "main() { value = 1 + 2 * 3; }",
+    "kind": "binary",
+    "op": "+"
+  },
+  {
+    "name": "comparison binds before logical and",
+    "source": "main() { value = score >= 10 and alive; }",
+    "kind": "logical",
+    "op": "and"
+  },
+  {
+    "name": "postfix chain ends in a call",
+    "source": "main() { value = world.players[0].move(2, 3); }",
+    "kind": "call",
+    "op": ""
+  }
+]

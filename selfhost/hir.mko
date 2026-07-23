@@ -1,0 +1,277 @@
+namespace BootstrapHir;
+
+use "runtime.mko";
+use "lexer.mko";
+use "parser.mko";
+use "checker.mko";
+
+# Structured typed HIR. Every expression has `op` and `type`; statements retain
+# blocks rather than introducing branches. MIR lowering owns control-flow
+# flattening.
+fn node(op: string) -> dict<string, dynamic> {
+    result: dict<string, dynamic> = {"op": op};
+    return result;
+}
+
+fn typed(op: string, type_name: string) -> dict<string, dynamic> {
+    result = BootstrapHir.node(op);
+    result["type"] = type_name;
+    return result;
+}
+
+fn lower_expression(checker_context: dict<string, dynamic>, environment: dict<string, dynamic>, expression: dict<string, dynamic>) -> dict<string, dynamic> {
+    kind: string = BootstrapParser.node_kind(expression);
+    type_name: string = BootstrapChecker.infer(checker_context, environment, expression);
+    if kind == "number" or kind == "string" or kind == "bool" or kind == "none" {
+        result = BootstrapHir.typed("literal", type_name);
+        result["value"] = BootstrapParser.field(expression, "value");
+        return result;
+    }
+    if kind == "identifier" {
+        result = BootstrapHir.typed("load", type_name);
+        result["name"] = BootstrapParser.field(expression, "value");
+        return result;
+    }
+    if kind == "binary" or kind == "logical" {
+        result = BootstrapHir.typed(kind, type_name);
+        result["operator"] = BootstrapParser.field(expression, "op");
+        result["left"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(expression, "left"));
+        result["right"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(expression, "right"));
+        return result;
+    }
+    if kind == "unary" {
+        result = BootstrapHir.typed("unary", type_name);
+        result["operator"] = BootstrapParser.field(expression, "op");
+        result["operand"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(expression, "operand"));
+        return result;
+    }
+    if kind == "call" {
+        result = BootstrapHir.typed("call", type_name);
+        result["callee"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(expression, "callee"));
+        arguments: list<dynamic> = [];
+        for argument in BootstrapParser.field(expression, "arguments") {
+            push(arguments, BootstrapHir.lower_expression(checker_context, environment, argument));
+        }
+        result["arguments"] = arguments;
+        return result;
+    }
+    if kind == "field" {
+        result = BootstrapHir.typed("field", type_name);
+        result["target"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(expression, "target"));
+        result["name"] = BootstrapParser.field(expression, "name");
+        return result;
+    }
+    if kind == "index" {
+        result = BootstrapHir.typed("index", type_name);
+        result["target"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(expression, "target"));
+        result["index"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(expression, "index"));
+        return result;
+    }
+    if kind == "list" {
+        result = BootstrapHir.typed("list", type_name);
+        items: list<dynamic> = [];
+        for item in BootstrapParser.field(expression, "items") {
+            push(items, BootstrapHir.lower_expression(checker_context, environment, item));
+        }
+        result["items"] = items;
+        return result;
+    }
+    if kind == "dict" {
+        result = BootstrapHir.typed("dict", type_name);
+        entries: list<dynamic> = [];
+        for entry in BootstrapParser.field(expression, "entries") {
+            hir_entry = BootstrapHir.node("entry");
+            hir_entry["key"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(entry, "key"));
+            hir_entry["value"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(entry, "value"));
+            push(entries, hir_entry);
+        }
+        result["entries"] = entries;
+        return result;
+    }
+    if kind == "struct_literal" {
+        result = BootstrapHir.typed("struct", type_name);
+        result["name"] = BootstrapParser.field(expression, "name");
+        fields: list<dynamic> = [];
+        for field_value in BootstrapParser.field(expression, "fields") {
+            hir_field = BootstrapHir.node("field_value");
+            hir_field["name"] = BootstrapParser.field(field_value, "name");
+            hir_field["value"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(field_value, "value"));
+            push(fields, hir_field);
+        }
+        result["fields"] = fields;
+        return result;
+    }
+    if kind == "input" {
+        result = BootstrapHir.typed("input", "string");
+        result["prompt"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(expression, "prompt"));
+        return result;
+    }
+    if kind == "template_string" {
+        result = BootstrapHir.typed("template", "string");
+        parts: list<dynamic> = [];
+        for part in BootstrapParser.field(expression, "parts") {
+            if BootstrapParser.node_kind(part) == "template_text" {
+                hir_part = BootstrapHir.typed("template_text", "string");
+                hir_part["value"] = BootstrapParser.field(part, "value");
+            } else {
+                hir_part = BootstrapHir.node("template_expression");
+                hir_part["value"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(part, "value"));
+            }
+            push(parts, hir_part);
+        }
+        result["parts"] = parts;
+        return result;
+    }
+    if kind == "lambda" {
+        result = BootstrapHir.typed("lambda", "fn");
+        result["parameters"] = BootstrapParser.field(expression, "parameters");
+        lambda_environment: dict<string, dynamic> = merge({}, environment);
+        for parameter in result["parameters"] {
+            parameter_type: dynamic = BootstrapParser.field(parameter, "type");
+            lambda_environment[BootstrapParser.field(parameter, "name")] = BootstrapChecker.normalize_type(parameter_type);
+        }
+        lambda_expression: dynamic = BootstrapParser.field(expression, "expression");
+        if lambda_expression == none {
+            result["expression"] = none;
+        } else {
+            result["expression"] = BootstrapHir.lower_expression(checker_context, lambda_environment, lambda_expression);
+        }
+        result["body"] = BootstrapHir.lower_block(checker_context, lambda_environment, BootstrapParser.field(expression, "body"), "dynamic");
+        return result;
+    }
+    result = BootstrapHir.typed("dynamic", type_name);
+    result["ast_kind"] = kind;
+    return result;
+}
+
+fn lower_target(checker_context: dict<string, dynamic>, environment: dict<string, dynamic>, target: dict<string, dynamic>) -> dict<string, dynamic> {
+    return BootstrapHir.lower_expression(checker_context, environment, target);
+}
+
+fn lower_statement(checker_context: dict<string, dynamic>, environment: dict<string, dynamic>, statement: dict<string, dynamic>, return_type: string) -> dict<string, dynamic> {
+    kind: string = BootstrapParser.node_kind(statement);
+    result = BootstrapHir.node(kind);
+    if kind == "assign" {
+        value = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(statement, "value"));
+        target = BootstrapParser.field(statement, "target");
+        result["target"] = BootstrapHir.lower_target(checker_context, environment, target);
+        result["operator"] = BootstrapParser.field(statement, "op");
+        result["value"] = value;
+        annotation: string = BootstrapChecker.normalize_type(BootstrapParser.field(statement, "type"));
+        binding_type: string = annotation;
+        if annotation == "dynamic" {
+            binding_type = value["type"];
+        }
+        result["type"] = binding_type;
+        if BootstrapParser.node_kind(target) == "identifier" {
+            environment[BootstrapParser.field(target, "value")] = binding_type;
+        }
+        return result;
+    }
+    if kind == "const" {
+        result["name"] = BootstrapParser.field(statement, "name");
+        result["value"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(statement, "value"));
+        result["type"] = result["value"]["type"];
+        environment[result["name"]] = result["type"];
+        return result;
+    }
+    if kind == "return" {
+        value: dynamic = BootstrapParser.field(statement, "value");
+        result["type"] = return_type;
+        result["value"] = none;
+        if value != none {
+            result["value"] = BootstrapHir.lower_expression(checker_context, environment, value);
+        }
+        return result;
+    }
+    if kind == "print" or kind == "printnl" or kind == "expression" or kind == "throw" {
+        result["value"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(statement, "value"));
+        return result;
+    }
+    if kind == "run" {
+        result["command"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(statement, "command"));
+        return result;
+    }
+    if kind == "if" {
+        result["condition"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(statement, "condition"));
+        result["then"] = BootstrapHir.lower_block(checker_context, merge({}, environment), BootstrapParser.field(statement, "then"), return_type);
+        result["else"] = BootstrapHir.lower_block(checker_context, merge({}, environment), BootstrapParser.field(statement, "else"), return_type);
+        return result;
+    }
+    if kind == "while" {
+        result["condition"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(statement, "condition"));
+        result["body"] = BootstrapHir.lower_block(checker_context, merge({}, environment), BootstrapParser.field(statement, "body"), return_type);
+        return result;
+    }
+    if kind == "for" {
+        result["name"] = BootstrapParser.field(statement, "name");
+        result["iterable"] = BootstrapHir.lower_expression(checker_context, environment, BootstrapParser.field(statement, "iterable"));
+        loop_environment: dict<string, dynamic> = merge({}, environment);
+        loop_environment[result["name"]] = "dynamic";
+        result["body"] = BootstrapHir.lower_block(checker_context, loop_environment, BootstrapParser.field(statement, "body"), return_type);
+        return result;
+    }
+    if kind == "try" {
+        result["body"] = BootstrapHir.lower_block(checker_context, merge({}, environment), BootstrapParser.field(statement, "body"), return_type);
+        result["catch_name"] = BootstrapParser.field(statement, "catch_name");
+        result["has_catch"] = BootstrapParser.field(statement, "has_catch");
+        catch_environment: dict<string, dynamic> = merge({}, environment);
+        if result["catch_name"] != none {
+            catch_environment[result["catch_name"]] = "string";
+        }
+        result["catch_body"] = BootstrapHir.lower_block(checker_context, catch_environment, BootstrapParser.field(statement, "catch_body"), return_type);
+        return result;
+    }
+    return result;
+}
+
+fn lower_block(checker_context: dict<string, dynamic>, environment: dict<string, dynamic>, statements: list<dynamic>, return_type: string) -> list<dynamic> {
+    lowered: list<dynamic> = [];
+    for statement in statements {
+        push(lowered, BootstrapHir.lower_statement(checker_context, environment, statement, return_type));
+    }
+    return lowered;
+}
+
+fn lower_program(program: dict<string, dynamic>) -> dict<string, dynamic> {
+    checker_context = BootstrapChecker.context(program);
+    BootstrapChecker.collect_declarations(checker_context, program);
+    BootstrapChecker.resolve(checker_context, program);
+    BootstrapChecker.check_types(checker_context, program);
+    issues: list<string> = checker_context["issues"];
+    if len(issues) > 0 {
+        throw "cannot lower invalid program: {join(issues, "; ")}";
+    }
+    hir_program = BootstrapHir.node("program");
+    hir_program["version"] = "mako.hir 1";
+    hir_program["structs"] = BootstrapParser.field(program, "structs");
+    hir_program["globals"] = [];
+    global_environment: dict<string, dynamic> = {};
+    for constant in BootstrapParser.field(program, "constants") {
+        push(hir_program["globals"], BootstrapHir.lower_statement(checker_context, global_environment, constant, "dynamic"));
+    }
+    hir_functions: list<dynamic> = [];
+    for function_node in BootstrapParser.field(program, "functions") {
+        hir_function = BootstrapHir.node("function");
+        hir_function["name"] = BootstrapParser.field(function_node, "name");
+        hir_function["parameters"] = BootstrapParser.field(function_node, "parameters");
+        hir_function["return_type"] = BootstrapChecker.normalize_type(BootstrapParser.field(function_node, "return_type"));
+        function_environment: dict<string, dynamic> = {};
+        for parameter in hir_function["parameters"] {
+            function_environment[BootstrapParser.field(parameter, "name")] = BootstrapChecker.normalize_type(BootstrapParser.field(parameter, "type"));
+        }
+        hir_function["body"] = BootstrapHir.lower_block(checker_context, function_environment, BootstrapParser.field(function_node, "body"), hir_function["return_type"]);
+        push(hir_functions, hir_function);
+    }
+    hir_program["functions"] = hir_functions;
+    hir_program["main"] = BootstrapHir.lower_block(checker_context, {}, BootstrapParser.field(program, "body"), "dynamic");
+    return hir_program;
+}
+
+fn lower(source: string) -> dict<string, dynamic> {
+    return BootstrapHir.lower_program(BootstrapParser.parse(source));
+}
+
+fn emit_json(source: string) -> string {
+    return json_encode(BootstrapHir.lower(source));
+}

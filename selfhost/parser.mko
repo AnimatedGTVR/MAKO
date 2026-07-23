@@ -1,0 +1,707 @@
+namespace BootstrapParser;
+
+use "runtime.mko";
+use "lexer.mko";
+
+# AST nodes are dictionaries with a mandatory "kind" field. This is the same
+# representation strategy as bootstrap tokens: parser users go through these
+# helpers so a future native representation can replace the dictionaries.
+fn node(kind: string) -> dict<string, dynamic> {
+    value: dict<string, dynamic> = {"kind": kind};
+    return value;
+}
+
+fn node_kind(value: dict<string, dynamic>) -> string {
+    return value["kind"];
+}
+
+fn field(value: dict<string, dynamic>, name: string) -> dynamic {
+    if !has(value, name) {
+        throw "AST node '{value["kind"]}' has no field '{name}'";
+    }
+    return value[name];
+}
+
+fn set_field(value: dict<string, dynamic>, name: string, field_value: dynamic) -> none {
+    value[name] = field_value;
+    return none;
+}
+
+fn state(tokens: list<dict<string, dynamic>>) -> dict<string, dynamic> {
+    parser_state: dict<string, dynamic> = {"tokens": tokens, "pos": 0, "struct_names": {}};
+    return parser_state;
+}
+
+fn current(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    return parser_state["tokens"][parser_state["pos"]];
+}
+
+fn previous(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    return parser_state["tokens"][parser_state["pos"] - 1];
+}
+
+fn current_kind(parser_state: dict<string, dynamic>) -> string {
+    return BootstrapLexer.kind(BootstrapParser.current(parser_state));
+}
+
+fn at(parser_state: dict<string, dynamic>, kind: string) -> bool {
+    return BootstrapParser.current_kind(parser_state) == kind;
+}
+
+fn advance(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    token = BootstrapParser.current(parser_state);
+    if BootstrapLexer.kind(token) != "Eof" {
+        parser_state["pos"] = parser_state["pos"] + 1;
+    }
+    return token;
+}
+
+fn match(parser_state: dict<string, dynamic>, kind: string) -> bool {
+    if !BootstrapParser.at(parser_state, kind) {
+        return false;
+    }
+    BootstrapParser.advance(parser_state);
+    return true;
+}
+
+fn fail(parser_state: dict<string, dynamic>, message: string) -> none {
+    token = BootstrapParser.current(parser_state);
+    throw "{BootstrapLexer.line(token)}:{BootstrapLexer.col(token)}: {message} (got {BootstrapLexer.kind(token)})";
+}
+
+fn expect(parser_state: dict<string, dynamic>, kind: string, message: string) -> dict<string, dynamic> {
+    if !BootstrapParser.at(parser_state, kind) {
+        BootstrapParser.fail(parser_state, message);
+    }
+    return BootstrapParser.advance(parser_state);
+}
+
+fn skip_comments(parser_state: dict<string, dynamic>) -> none {
+    while BootstrapParser.match(parser_state, "Comment") {
+    }
+    return none;
+}
+
+fn parse_type(parser_state: dict<string, dynamic>) -> string {
+    name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected a type name"));
+    if !BootstrapParser.match(parser_state, "Lt") {
+        return name;
+    }
+    parts: list<string> = [];
+    while true {
+        push(parts, BootstrapParser.parse_type(parser_state));
+        if !BootstrapParser.match(parser_state, "Comma") {
+            break;
+        }
+    }
+    BootstrapParser.expect(parser_state, "Gt", "expected '>' after type arguments");
+    return "{name}<{join(parts, ", ")}>";
+}
+
+fn literal(kind: string, value: dynamic) -> dict<string, dynamic> {
+    literal_node = BootstrapParser.node(kind);
+    BootstrapParser.set_field(literal_node, "value", value);
+    return literal_node;
+}
+
+fn binary(kind: string, operator: string, left: dynamic, right: dynamic) -> dict<string, dynamic> {
+    binary_node = BootstrapParser.node(kind);
+    BootstrapParser.set_field(binary_node, "op", operator);
+    BootstrapParser.set_field(binary_node, "left", left);
+    BootstrapParser.set_field(binary_node, "right", right);
+    return binary_node;
+}
+
+fn template_text(value: string) -> dict<string, dynamic> {
+    text_node = BootstrapParser.node("template_text");
+    BootstrapParser.set_field(text_node, "value", value);
+    return text_node;
+}
+
+fn template_expression(value: dynamic) -> dict<string, dynamic> {
+    expression_node = BootstrapParser.node("template_expression");
+    BootstrapParser.set_field(expression_node, "value", value);
+    return expression_node;
+}
+
+fn parse_embedded_expression(source: string) -> dict<string, dynamic> {
+    embedded_tokens: list<dict<string, dynamic>> = BootstrapLexer.lex(source);
+    embedded_state = BootstrapParser.state(embedded_tokens);
+    embedded_expression = BootstrapParser.parse_expression(embedded_state);
+    BootstrapParser.skip_comments(embedded_state);
+    BootstrapParser.expect(embedded_state, "Eof", "unexpected content in template interpolation");
+    return embedded_expression;
+}
+
+fn parse_template(raw: string) -> dict<string, dynamic> {
+    template_node = BootstrapParser.node("template_string");
+    template_parts: list<dynamic> = [];
+    text_buffer: list<string> = BootstrapRuntime.text_buffer();
+    template_pos: number = 0;
+    while template_pos < len(raw) {
+        template_character: string = raw[template_pos];
+        template_next: string = "";
+        if template_pos + 1 < len(raw) {
+            template_next = raw[template_pos + 1];
+        }
+        if template_character == "\\" and template_pos + 1 < len(raw) {
+            BootstrapRuntime.text_append(text_buffer, BootstrapLexer.unescape(template_next));
+            template_pos = template_pos + 2;
+            continue;
+        }
+        if template_character == "{{" and template_next == "{{" {
+            BootstrapRuntime.text_append_char(text_buffer, "{{");
+            template_pos = template_pos + 2;
+            continue;
+        }
+        if template_character == "}}" and template_next == "}}" {
+            BootstrapRuntime.text_append_char(text_buffer, "}}");
+            template_pos = template_pos + 2;
+            continue;
+        }
+        if template_character != "{{" {
+            BootstrapRuntime.text_append(text_buffer, template_character);
+            template_pos = template_pos + 1;
+            continue;
+        }
+        if len(text_buffer) > 0 {
+            push(template_parts, BootstrapParser.template_text(BootstrapRuntime.text_finish(text_buffer)));
+            text_buffer = BootstrapRuntime.text_buffer();
+        }
+        expression_start: number = template_pos + 1;
+        expression_pos: number = expression_start;
+        expression_depth: number = 1;
+        in_string: bool = false;
+        escaped: bool = false;
+        while expression_pos < len(raw) and expression_depth > 0 {
+            expression_character: string = raw[expression_pos];
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if expression_character == "\\" {
+                    escaped = true;
+                } else {
+                    if expression_character == "\"" {
+                        in_string = false;
+                    }
+                }
+            } else if expression_character == "\"" {
+                in_string = true;
+            } else {
+                if expression_character == "{{" {
+                    expression_depth = expression_depth + 1;
+                } else if expression_character == "}}" {
+                    expression_depth = expression_depth - 1;
+                }
+            }
+            expression_pos = expression_pos + 1;
+        }
+        if expression_depth != 0 {
+            throw "missing '}}' to close template interpolation";
+        }
+        expression_source: string = slice(raw, expression_start, expression_pos - 1);
+        if trim(expression_source) == "" {
+            throw "template interpolation cannot be empty";
+        }
+        push(template_parts, BootstrapParser.template_expression(BootstrapParser.parse_embedded_expression(expression_source)));
+        template_pos = expression_pos;
+    }
+    if len(text_buffer) > 0 or len(template_parts) == 0 {
+        push(template_parts, BootstrapParser.template_text(BootstrapRuntime.text_finish(text_buffer)));
+    }
+    BootstrapParser.set_field(template_node, "raw", raw);
+    BootstrapParser.set_field(template_node, "parts", template_parts);
+    return template_node;
+}
+
+fn parse_primary(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    token = BootstrapParser.current(parser_state);
+    kind: string = BootstrapLexer.kind(token);
+    if kind == "Number" {
+        BootstrapParser.advance(parser_state);
+        return BootstrapParser.literal("number", to_num(BootstrapLexer.value(token)));
+    }
+    if kind == "String" {
+        BootstrapParser.advance(parser_state);
+        return BootstrapParser.literal("string", BootstrapLexer.value(token));
+    }
+    if kind == "TemplateString" {
+        BootstrapParser.advance(parser_state);
+        return BootstrapParser.parse_template(BootstrapLexer.value(token));
+    }
+    if kind == "True" or kind == "False" {
+        BootstrapParser.advance(parser_state);
+        return BootstrapParser.literal("bool", kind == "True");
+    }
+    if kind == "None" {
+        BootstrapParser.advance(parser_state);
+        return BootstrapParser.literal("none", none);
+    }
+    if kind == "Identifier" {
+        BootstrapParser.advance(parser_state);
+        identifier_name: string = BootstrapLexer.value(token);
+        if BootstrapParser.at(parser_state, "LBrace") and has(parser_state["struct_names"], identifier_name) {
+            BootstrapParser.advance(parser_state);
+            struct_fields: list<dynamic> = [];
+            if !BootstrapParser.at(parser_state, "RBrace") {
+                while true {
+                    struct_field = BootstrapParser.node("struct_field_value");
+                    struct_field_name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected struct field name"));
+                    BootstrapParser.expect(parser_state, "Colon", "expected ':' after struct field name");
+                    BootstrapParser.set_field(struct_field, "name", struct_field_name);
+                    BootstrapParser.set_field(struct_field, "value", BootstrapParser.parse_expression(parser_state));
+                    push(struct_fields, struct_field);
+                    if !BootstrapParser.match(parser_state, "Comma") {
+                        break;
+                    }
+                }
+            }
+            BootstrapParser.expect(parser_state, "RBrace", "expected '}}' after struct literal");
+            struct_literal = BootstrapParser.node("struct_literal");
+            BootstrapParser.set_field(struct_literal, "name", identifier_name);
+            BootstrapParser.set_field(struct_literal, "fields", struct_fields);
+            return struct_literal;
+        }
+        return BootstrapParser.literal("identifier", identifier_name);
+    }
+    if kind == "Input" {
+        BootstrapParser.advance(parser_state);
+        input_node = BootstrapParser.node("input");
+        BootstrapParser.set_field(input_node, "prompt", BootstrapParser.parse_unary(parser_state));
+        return input_node;
+    }
+    if kind == "Fn" {
+        BootstrapParser.advance(parser_state);
+        lambda_parameters: list<dynamic> = BootstrapParser.parse_parameters(parser_state);
+        lambda_node = BootstrapParser.node("lambda");
+        BootstrapParser.set_field(lambda_node, "parameters", lambda_parameters);
+        if BootstrapParser.match(parser_state, "Arrow") {
+            lambda_expression = BootstrapParser.parse_expression(parser_state);
+            BootstrapParser.set_field(lambda_node, "expression", lambda_expression);
+            BootstrapParser.set_field(lambda_node, "body", []);
+        } else {
+            BootstrapParser.set_field(lambda_node, "expression", none);
+            BootstrapParser.set_field(lambda_node, "body", BootstrapParser.parse_block(parser_state));
+        }
+        return lambda_node;
+    }
+    if kind == "LParen" {
+        BootstrapParser.advance(parser_state);
+        value = BootstrapParser.parse_expression(parser_state);
+        BootstrapParser.expect(parser_state, "RParen", "expected ')' after expression");
+        return value;
+    }
+    if kind == "LBracket" {
+        BootstrapParser.advance(parser_state);
+        items: list<dynamic> = [];
+        if !BootstrapParser.at(parser_state, "RBracket") {
+            while true {
+                push(items, BootstrapParser.parse_expression(parser_state));
+                if !BootstrapParser.match(parser_state, "Comma") {
+                    break;
+                }
+            }
+        }
+        BootstrapParser.expect(parser_state, "RBracket", "expected ']' after list");
+        list_node = BootstrapParser.node("list");
+        BootstrapParser.set_field(list_node, "items", items);
+        return list_node;
+    }
+    if kind == "LBrace" {
+        BootstrapParser.advance(parser_state);
+        entries: list<dynamic> = [];
+        if !BootstrapParser.at(parser_state, "RBrace") {
+            while true {
+                key = BootstrapParser.parse_expression(parser_state);
+                BootstrapParser.expect(parser_state, "Colon", "expected ':' after dictionary key");
+                value = BootstrapParser.parse_expression(parser_state);
+                entry = BootstrapParser.node("dict_entry");
+                BootstrapParser.set_field(entry, "key", key);
+                BootstrapParser.set_field(entry, "value", value);
+                push(entries, entry);
+                if !BootstrapParser.match(parser_state, "Comma") {
+                    break;
+                }
+            }
+        }
+        BootstrapParser.expect(parser_state, "RBrace", "expected '}}' after dictionary");
+        dict_node = BootstrapParser.node("dict");
+        BootstrapParser.set_field(dict_node, "entries", entries);
+        return dict_node;
+    }
+    BootstrapParser.fail(parser_state, "expected an expression");
+    return BootstrapParser.node("invalid");
+}
+
+fn parse_postfix(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    postfix_expression = BootstrapParser.parse_primary(parser_state);
+    while true {
+        if BootstrapParser.match(parser_state, "LParen") {
+            arguments: list<dynamic> = [];
+            if !BootstrapParser.at(parser_state, "RParen") {
+                while true {
+                    push(arguments, BootstrapParser.parse_expression(parser_state));
+                    if !BootstrapParser.match(parser_state, "Comma") {
+                        break;
+                    }
+                }
+            }
+            BootstrapParser.expect(parser_state, "RParen", "expected ')' after arguments");
+            call = BootstrapParser.node("call");
+            BootstrapParser.set_field(call, "callee", postfix_expression);
+            BootstrapParser.set_field(call, "arguments", arguments);
+            postfix_expression = call;
+            continue;
+        }
+        if BootstrapParser.match(parser_state, "LBracket") {
+            index = BootstrapParser.parse_expression(parser_state);
+            BootstrapParser.expect(parser_state, "RBracket", "expected ']' after index");
+            access = BootstrapParser.node("index");
+            BootstrapParser.set_field(access, "target", postfix_expression);
+            BootstrapParser.set_field(access, "index", index);
+            postfix_expression = access;
+            continue;
+        }
+        if BootstrapParser.match(parser_state, "Dot") {
+            name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected field name after '.'"));
+            access = BootstrapParser.node("field");
+            BootstrapParser.set_field(access, "target", postfix_expression);
+            BootstrapParser.set_field(access, "name", name);
+            postfix_expression = access;
+            continue;
+        }
+        break;
+    }
+    return postfix_expression;
+}
+
+fn parse_unary(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    if BootstrapParser.at(parser_state, "Bang") or BootstrapParser.at(parser_state, "Not") or BootstrapParser.at(parser_state, "Minus") {
+        operator = BootstrapLexer.value(BootstrapParser.advance(parser_state));
+        unary_node = BootstrapParser.node("unary");
+        BootstrapParser.set_field(unary_node, "op", operator);
+        BootstrapParser.set_field(unary_node, "operand", BootstrapParser.parse_unary(parser_state));
+        return unary_node;
+    }
+    return BootstrapParser.parse_postfix(parser_state);
+}
+
+fn parse_factor(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    factor_expression = BootstrapParser.parse_unary(parser_state);
+    while BootstrapParser.at(parser_state, "Star") or BootstrapParser.at(parser_state, "Slash") or BootstrapParser.at(parser_state, "Percent") {
+        operator = BootstrapLexer.value(BootstrapParser.advance(parser_state));
+        factor_expression = BootstrapParser.binary("binary", operator, factor_expression, BootstrapParser.parse_unary(parser_state));
+    }
+    return factor_expression;
+}
+
+fn parse_term(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    term_expression = BootstrapParser.parse_factor(parser_state);
+    while BootstrapParser.at(parser_state, "Plus") or BootstrapParser.at(parser_state, "Minus") {
+        operator = BootstrapLexer.value(BootstrapParser.advance(parser_state));
+        term_expression = BootstrapParser.binary("binary", operator, term_expression, BootstrapParser.parse_factor(parser_state));
+    }
+    return term_expression;
+}
+
+fn parse_comparison(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    comparison_expression = BootstrapParser.parse_term(parser_state);
+    while BootstrapParser.at(parser_state, "EqEq") or BootstrapParser.at(parser_state, "NotEq") or BootstrapParser.at(parser_state, "Lt") or BootstrapParser.at(parser_state, "Gt") or BootstrapParser.at(parser_state, "LtEq") or BootstrapParser.at(parser_state, "GtEq") {
+        operator = BootstrapLexer.value(BootstrapParser.advance(parser_state));
+        comparison_expression = BootstrapParser.binary("binary", operator, comparison_expression, BootstrapParser.parse_term(parser_state));
+    }
+    return comparison_expression;
+}
+
+fn parse_expression(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    logical_expression = BootstrapParser.parse_comparison(parser_state);
+    while BootstrapParser.at(parser_state, "And") or BootstrapParser.at(parser_state, "Or") {
+        operator = BootstrapLexer.value(BootstrapParser.advance(parser_state));
+        logical_expression = BootstrapParser.binary("logical", operator, logical_expression, BootstrapParser.parse_comparison(parser_state));
+    }
+    return logical_expression;
+}
+
+fn parse_block(parser_state: dict<string, dynamic>) -> list<dynamic> {
+    BootstrapParser.expect(parser_state, "LBrace", "expected '{{' before block");
+    statements: list<dynamic> = [];
+    BootstrapParser.skip_comments(parser_state);
+    while !BootstrapParser.at(parser_state, "RBrace") and !BootstrapParser.at(parser_state, "Eof") {
+        push(statements, BootstrapParser.parse_statement(parser_state));
+        BootstrapParser.skip_comments(parser_state);
+    }
+    BootstrapParser.expect(parser_state, "RBrace", "expected '}}' after block");
+    return statements;
+}
+
+fn parse_statement(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    BootstrapParser.skip_comments(parser_state);
+    kind: string = BootstrapParser.current_kind(parser_state);
+    if kind == "Print" or kind == "Printnl" {
+        BootstrapParser.advance(parser_state);
+        statement_kind: string = "print";
+        if kind == "Printnl" {
+            statement_kind = "printnl";
+        }
+        print_node = BootstrapParser.node(statement_kind);
+        BootstrapParser.set_field(print_node, "value", BootstrapParser.parse_expression(parser_state));
+        BootstrapParser.expect(parser_state, "Semicolon", "expected ';' after print");
+        return print_node;
+    }
+    if kind == "Return" {
+        BootstrapParser.advance(parser_state);
+        return_node = BootstrapParser.node("return");
+        return_value: dynamic = none;
+        if !BootstrapParser.at(parser_state, "Semicolon") {
+            return_value = BootstrapParser.parse_expression(parser_state);
+        }
+        BootstrapParser.set_field(return_node, "value", return_value);
+        BootstrapParser.expect(parser_state, "Semicolon", "expected ';' after return");
+        return return_node;
+    }
+    if kind == "Const" {
+        BootstrapParser.advance(parser_state);
+        const_name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected constant name"));
+        BootstrapParser.expect(parser_state, "Assign", "expected '=' after constant name");
+        const_node = BootstrapParser.node("const");
+        BootstrapParser.set_field(const_node, "name", const_name);
+        BootstrapParser.set_field(const_node, "value", BootstrapParser.parse_expression(parser_state));
+        BootstrapParser.expect(parser_state, "Semicolon", "expected ';' after constant");
+        return const_node;
+    }
+    if kind == "Break" or kind == "Continue" {
+        BootstrapParser.advance(parser_state);
+        BootstrapParser.expect(parser_state, "Semicolon", "expected ';' after loop control");
+        return BootstrapParser.node(lower(kind));
+    }
+    if kind == "If" {
+        BootstrapParser.advance(parser_state);
+        if_node = BootstrapParser.node("if");
+        BootstrapParser.set_field(if_node, "condition", BootstrapParser.parse_expression(parser_state));
+        BootstrapParser.set_field(if_node, "then", BootstrapParser.parse_block(parser_state));
+        otherwise: list<dynamic> = [];
+        if BootstrapParser.match(parser_state, "Else") {
+            if BootstrapParser.at(parser_state, "If") {
+                push(otherwise, BootstrapParser.parse_statement(parser_state));
+            } else {
+                otherwise = BootstrapParser.parse_block(parser_state);
+            }
+        }
+        BootstrapParser.set_field(if_node, "else", otherwise);
+        return if_node;
+    }
+    if kind == "While" {
+        BootstrapParser.advance(parser_state);
+        while_node = BootstrapParser.node("while");
+        BootstrapParser.set_field(while_node, "condition", BootstrapParser.parse_expression(parser_state));
+        BootstrapParser.set_field(while_node, "body", BootstrapParser.parse_block(parser_state));
+        return while_node;
+    }
+    if kind == "For" {
+        BootstrapParser.advance(parser_state);
+        name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected loop variable"));
+        BootstrapParser.expect(parser_state, "In", "expected 'in' after loop variable");
+        for_node = BootstrapParser.node("for");
+        BootstrapParser.set_field(for_node, "name", name);
+        BootstrapParser.set_field(for_node, "iterable", BootstrapParser.parse_expression(parser_state));
+        BootstrapParser.set_field(for_node, "body", BootstrapParser.parse_block(parser_state));
+        return for_node;
+    }
+    if kind == "Throw" {
+        BootstrapParser.advance(parser_state);
+        throw_node = BootstrapParser.node("throw");
+        BootstrapParser.set_field(throw_node, "value", BootstrapParser.parse_expression(parser_state));
+        BootstrapParser.expect(parser_state, "Semicolon", "expected ';' after throw");
+        return throw_node;
+    }
+    if kind == "Run" {
+        BootstrapParser.advance(parser_state);
+        run_node = BootstrapParser.node("run");
+        BootstrapParser.set_field(run_node, "command", BootstrapParser.parse_expression(parser_state));
+        BootstrapParser.expect(parser_state, "Semicolon", "expected ';' after run");
+        return run_node;
+    }
+    if kind == "Try" {
+        BootstrapParser.advance(parser_state);
+        try_node = BootstrapParser.node("try");
+        BootstrapParser.set_field(try_node, "body", BootstrapParser.parse_block(parser_state));
+        catch_name: dynamic = none;
+        catch_body: list<dynamic> = [];
+        has_catch: bool = false;
+        if BootstrapParser.match(parser_state, "Catch") {
+            has_catch = true;
+            if BootstrapParser.at(parser_state, "Identifier") {
+                catch_name = BootstrapLexer.value(BootstrapParser.advance(parser_state));
+            }
+            catch_body = BootstrapParser.parse_block(parser_state);
+        }
+        BootstrapParser.set_field(try_node, "catch_name", catch_name);
+        BootstrapParser.set_field(try_node, "catch_body", catch_body);
+        BootstrapParser.set_field(try_node, "has_catch", has_catch);
+        return try_node;
+    }
+    expression = BootstrapParser.parse_expression(parser_state);
+    assignment_type: dynamic = none;
+    if BootstrapParser.match(parser_state, "Colon") {
+        assignment_type = BootstrapParser.parse_type(parser_state);
+        BootstrapParser.expect(parser_state, "Assign", "expected '=' after type annotation");
+    }
+    if assignment_type != none or BootstrapParser.match(parser_state, "Assign") or BootstrapParser.match(parser_state, "PlusEq") or BootstrapParser.match(parser_state, "MinusEq") or BootstrapParser.match(parser_state, "StarEq") or BootstrapParser.match(parser_state, "SlashEq") {
+        assignment_operator: string = "=";
+        if assignment_type == none {
+            assignment_operator = BootstrapLexer.value(BootstrapParser.previous(parser_state));
+        }
+        assign_node = BootstrapParser.node("assign");
+        BootstrapParser.set_field(assign_node, "target", expression);
+        BootstrapParser.set_field(assign_node, "op", assignment_operator);
+        BootstrapParser.set_field(assign_node, "type", assignment_type);
+        BootstrapParser.set_field(assign_node, "value", BootstrapParser.parse_expression(parser_state));
+        BootstrapParser.expect(parser_state, "Semicolon", "expected ';' after assignment");
+        return assign_node;
+    }
+    BootstrapParser.expect(parser_state, "Semicolon", "expected ';' after expression");
+    expression_node = BootstrapParser.node("expression");
+    BootstrapParser.set_field(expression_node, "value", expression);
+    return expression_node;
+}
+
+fn parse_parameters(parser_state: dict<string, dynamic>) -> list<dynamic> {
+    parameter_nodes: list<dynamic> = [];
+    BootstrapParser.expect(parser_state, "LParen", "expected '(' before parameters");
+    if !BootstrapParser.at(parser_state, "RParen") {
+        while true {
+            parameter_node = BootstrapParser.node("parameter");
+            parameter_name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected parameter name"));
+            BootstrapParser.set_field(parameter_node, "name", parameter_name);
+            parameter_annotation: dynamic = none;
+            if BootstrapParser.match(parser_state, "Colon") {
+                parameter_annotation = BootstrapParser.parse_type(parser_state);
+            }
+            BootstrapParser.set_field(parameter_node, "type", parameter_annotation);
+            push(parameter_nodes, parameter_node);
+            if !BootstrapParser.match(parser_state, "Comma") {
+                break;
+            }
+        }
+    }
+    BootstrapParser.expect(parser_state, "RParen", "expected ')' after parameters");
+    return parameter_nodes;
+}
+
+fn parse_function(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    BootstrapParser.expect(parser_state, "Fn", "expected 'fn'");
+    function_name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected function name"));
+    if BootstrapParser.match(parser_state, "Dot") {
+        method_name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected method name after '.'"));
+        function_name = function_name + "." + method_name;
+    }
+    function_parameters = BootstrapParser.parse_parameters(parser_state);
+    function_return_type: dynamic = none;
+    if BootstrapParser.match(parser_state, "ThinArrow") {
+        function_return_type = BootstrapParser.parse_type(parser_state);
+    }
+    function_node = BootstrapParser.node("function");
+    BootstrapParser.set_field(function_node, "name", function_name);
+    BootstrapParser.set_field(function_node, "parameters", function_parameters);
+    BootstrapParser.set_field(function_node, "return_type", function_return_type);
+    BootstrapParser.set_field(function_node, "body", BootstrapParser.parse_block(parser_state));
+    return function_node;
+}
+
+fn parse_struct(parser_state: dict<string, dynamic>) -> dict<string, dynamic> {
+    BootstrapParser.expect(parser_state, "Struct", "expected 'struct'");
+    struct_name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected struct name"));
+    parser_state["struct_names"][struct_name] = true;
+    BootstrapParser.expect(parser_state, "LBrace", "expected '{{' after struct name");
+    struct_fields: list<dynamic> = [];
+    while !BootstrapParser.at(parser_state, "RBrace") {
+        field_node = BootstrapParser.node("struct_field");
+        field_name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected struct field name"));
+        field_type: dynamic = none;
+        if BootstrapParser.match(parser_state, "Colon") {
+            field_type = BootstrapParser.parse_type(parser_state);
+        }
+        BootstrapParser.set_field(field_node, "name", field_name);
+        BootstrapParser.set_field(field_node, "type", field_type);
+        push(struct_fields, field_node);
+        if !BootstrapParser.match(parser_state, "Comma") {
+            break;
+        }
+    }
+    BootstrapParser.expect(parser_state, "RBrace", "expected '}}' after struct");
+    struct_node = BootstrapParser.node("struct");
+    BootstrapParser.set_field(struct_node, "name", struct_name);
+    BootstrapParser.set_field(struct_node, "fields", struct_fields);
+    return struct_node;
+}
+
+fn parse_program_tokens(tokens: list<dict<string, dynamic>>) -> dict<string, dynamic> {
+    parser_state = BootstrapParser.state(tokens);
+    script_name: dynamic = none;
+    namespace_name: dynamic = none;
+    packages: list<dynamic> = [];
+    imports: list<dynamic> = [];
+    constants: list<dynamic> = [];
+    structs: list<dynamic> = [];
+    functions: list<dynamic> = [];
+    body: list<dynamic> = [];
+    BootstrapParser.skip_comments(parser_state);
+    if BootstrapParser.match(parser_state, "Script") {
+        script_name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "String", "expected script name"));
+        BootstrapParser.expect(parser_state, "Semicolon", "expected ';' after script name");
+    }
+    if BootstrapParser.match(parser_state, "Namespace") {
+        namespace_name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected namespace name"));
+        BootstrapParser.expect(parser_state, "Semicolon", "expected ';' after namespace");
+    }
+    BootstrapParser.skip_comments(parser_state);
+    while BootstrapParser.at(parser_state, "Using") or BootstrapParser.at(parser_state, "Use") {
+        if BootstrapParser.match(parser_state, "Using") {
+            package = BootstrapParser.node("package");
+            name = BootstrapLexer.value(BootstrapParser.expect(parser_state, "Identifier", "expected package name"));
+            BootstrapParser.set_field(package, "name", name);
+            source: dynamic = none;
+            if BootstrapParser.match(parser_state, "From") {
+                source = BootstrapLexer.value(BootstrapParser.expect(parser_state, "String", "expected package source"));
+            }
+            BootstrapParser.set_field(package, "source", source);
+            push(packages, package);
+        } else {
+            BootstrapParser.advance(parser_state);
+            push(imports, BootstrapLexer.value(BootstrapParser.expect(parser_state, "String", "expected module path")));
+        }
+        BootstrapParser.expect(parser_state, "Semicolon", "expected ';' after import");
+        BootstrapParser.skip_comments(parser_state);
+    }
+    while BootstrapParser.at(parser_state, "Const") or BootstrapParser.at(parser_state, "Struct") or BootstrapParser.at(parser_state, "Fn") {
+        if BootstrapParser.at(parser_state, "Const") {
+            push(constants, BootstrapParser.parse_statement(parser_state));
+        } else if BootstrapParser.at(parser_state, "Struct") {
+            push(structs, BootstrapParser.parse_struct(parser_state));
+        } else {
+            push(functions, BootstrapParser.parse_function(parser_state));
+        }
+        BootstrapParser.skip_comments(parser_state);
+    }
+    if BootstrapParser.match(parser_state, "Main") {
+        BootstrapParser.expect(parser_state, "LParen", "expected '(' after main");
+        BootstrapParser.expect(parser_state, "RParen", "expected ')' after main");
+        body = BootstrapParser.parse_block(parser_state);
+    }
+    BootstrapParser.skip_comments(parser_state);
+    BootstrapParser.expect(parser_state, "Eof", "unexpected top-level declaration");
+    program = BootstrapParser.node("program");
+    BootstrapParser.set_field(program, "script", script_name);
+    BootstrapParser.set_field(program, "namespace", namespace_name);
+    BootstrapParser.set_field(program, "packages", packages);
+    BootstrapParser.set_field(program, "imports", imports);
+    BootstrapParser.set_field(program, "constants", constants);
+    BootstrapParser.set_field(program, "structs", structs);
+    BootstrapParser.set_field(program, "functions", functions);
+    BootstrapParser.set_field(program, "body", body);
+    return program;
+}
+
+fn parse(source: string) -> dict<string, dynamic> {
+    return BootstrapParser.parse_program_tokens(BootstrapLexer.lex(source));
+}

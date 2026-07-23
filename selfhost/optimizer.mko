@@ -1,0 +1,273 @@
+namespace BootstrapOptimizer;
+
+use "runtime.mko";
+use "lexer.mko";
+use "parser.mko";
+use "checker.mko";
+use "hir.mko";
+use "mir.mko";
+
+fn constant(value: dynamic, type_name: string) -> dict<string, dynamic> {
+    return {"value": value, "type": type_name};
+}
+
+fn truthy(value: dynamic) -> bool {
+    if value == none or value == false or value == 0 or value == "" {
+        return false;
+    }
+    if type(value) == "list" and len(value) == 0 {
+        return false;
+    }
+    return true;
+}
+
+fn evaluate_binary(operator: string, left: dynamic, right: dynamic) -> dict<string, dynamic> {
+    if operator == "+" {
+        return {"ok": true, "value": left + right};
+    }
+    if operator == "-" {
+        return {"ok": true, "value": left - right};
+    }
+    if operator == "*" {
+        return {"ok": true, "value": left * right};
+    }
+    if operator == "/" and right != 0 {
+        return {"ok": true, "value": left / right};
+    }
+    if operator == "%" and right != 0 {
+        return {"ok": true, "value": left % right};
+    }
+    if operator == "==" {
+        return {"ok": true, "value": left == right};
+    }
+    if operator == "!=" {
+        return {"ok": true, "value": left != right};
+    }
+    if operator == "<" {
+        return {"ok": true, "value": left < right};
+    }
+    if operator == ">" {
+        return {"ok": true, "value": left > right};
+    }
+    if operator == "<=" {
+        return {"ok": true, "value": left <= right};
+    }
+    if operator == ">=" {
+        return {"ok": true, "value": left >= right};
+    }
+    if operator == "and" {
+        return {
+                "ok": true,
+                "value": BootstrapOptimizer.truthy(left) and BootstrapOptimizer.truthy(right)
+            };
+    }
+    if operator == "or" {
+        return {
+                "ok": true,
+                "value": BootstrapOptimizer.truthy(left) or BootstrapOptimizer.truthy(right)
+            };
+    }
+    return {"ok": false, "value": none};
+}
+
+fn evaluate_unary(operator: string, operand: dynamic) -> dict<string, dynamic> {
+    if operator == "-" {
+        return {"ok": true, "value": -operand};
+    }
+    if operator == "!" or operator == "not" {
+        return {"ok": true, "value": !BootstrapOptimizer.truthy(operand)};
+    }
+    return {"ok": false, "value": none};
+}
+
+fn argument_constant(constants: dict<string, dynamic>, argument: dynamic) -> dynamic {
+    if type(argument) != "dict" or !has(argument, "value") {
+        return none;
+    }
+    if !has(constants, argument["value"]) {
+        return none;
+    }
+    return constants[argument["value"]];
+}
+
+fn fold_function(function: dict<string, dynamic>) -> none {
+    for block in function["blocks"] {
+        # Keep propagation block-local until dominance information is
+        # available. This is conservative and cannot leak a branch-local
+        # constant into a sibling block.
+        constants: dict<string, dynamic> = {};
+        for instruction in block["instructions"] {
+            result_name: dynamic = instruction["result"];
+            if instruction["op"] == "const" and result_name != none {
+                constants[result_name] = BootstrapOptimizer.constant(instruction["arguments"][0], instruction["type"]);
+                continue;
+            }
+            if starts_with(instruction["op"], "binary.") or starts_with(instruction["op"], "logical.") {
+                left = BootstrapOptimizer.argument_constant(constants, instruction["arguments"][0]);
+                right = BootstrapOptimizer.argument_constant(constants, instruction["arguments"][1]);
+                if left != none and right != none {
+                    operator_start: number = 8;
+                    if starts_with(instruction["op"], "binary.") {
+                        operator_start = 7;
+                    }
+                    operator: string = slice(instruction["op"], operator_start, len(instruction["op"]));
+                    folded = BootstrapOptimizer.evaluate_binary(operator, left["value"], right["value"]);
+                    if folded["ok"] {
+                        instruction["op"] = "const";
+                        instruction["arguments"] = [folded["value"]];
+                        constants[result_name] = BootstrapOptimizer.constant(folded["value"], instruction["type"]);
+                    }
+                }
+                continue;
+            }
+            if starts_with(instruction["op"], "unary.") {
+                operand = BootstrapOptimizer.argument_constant(constants, instruction["arguments"][0]);
+                if operand != none {
+                    operator: string = slice(instruction["op"], 6, len(instruction["op"]));
+                    folded = BootstrapOptimizer.evaluate_unary(operator, operand["value"]);
+                    if folded["ok"] {
+                        instruction["op"] = "const";
+                        instruction["arguments"] = [folded["value"]];
+                        constants[result_name] = BootstrapOptimizer.constant(folded["value"], instruction["type"]);
+                    }
+                }
+                continue;
+            }
+            # A new definition invalidates any older propagated value with
+            # the same name, though valid MIR normally defines each temp once.
+            if result_name != none and has(constants, result_name) {
+                remove(constants, result_name);
+            }
+        }
+        terminator = block["terminator"];
+        if terminator != none and terminator["op"] == "branch" {
+            condition = BootstrapOptimizer.argument_constant(constants, terminator["arguments"][0]);
+            if condition != none {
+                selected: number = 1;
+                if BootstrapOptimizer.truthy(condition["value"]) {
+                    selected = 0;
+                }
+                terminator["op"] = "jump";
+                terminator["arguments"] = [];
+                terminator["targets"] = [terminator["targets"][selected]];
+            }
+        }
+    }
+    return none;
+}
+
+fn reachable_labels(function: dict<string, dynamic>) -> dict<string, dynamic> {
+    reachable: dict<string, dynamic> = {};
+    pending: list<string> = ["entry"];
+    while len(pending) > 0 {
+        label: string = pop(pending);
+        if has(reachable, label) {
+            continue;
+        }
+        reachable[label] = true;
+        for block in function["blocks"] {
+            if block["label"] == label and block["terminator"] != none {
+                for target in block["terminator"]["targets"] {
+                    if !has(reachable, target) {
+                        push(pending, target);
+                    }
+                }
+            }
+        }
+    }
+    return reachable;
+}
+
+fn remove_unreachable(function: dict<string, dynamic>) -> none {
+    reachable: dict<string, dynamic> = BootstrapOptimizer.reachable_labels(function);
+    kept: list<dynamic> = [];
+    for block in function["blocks"] {
+        if has(reachable, block["label"]) {
+            push(kept, block);
+        }
+    }
+    function["blocks"] = kept;
+    return none;
+}
+
+fn mark_argument(used: dict<string, dynamic>, argument: dynamic) -> none {
+    if type(argument) == "dict" and has(argument, "value") and type(argument["value"]) == "string" and starts_with(argument["value"], "%") {
+        used[argument["value"]] = true;
+    }
+    return none;
+}
+
+fn pure(op: string) -> bool {
+    return op == "const" or op == "load" or starts_with(op, "binary.") or starts_with(op, "logical.") or starts_with(op, "unary.") or op == "field.get" or op == "index.get";
+}
+
+fn remove_dead_function(function: dict<string, dynamic>) -> none {
+    used: dict<string, dynamic> = {};
+    for block in function["blocks"] {
+        if block["terminator"] != none {
+            for argument in block["terminator"]["arguments"] {
+                BootstrapOptimizer.mark_argument(used, argument);
+            }
+        }
+        # Side-effecting instructions are roots.
+        for instruction in block["instructions"] {
+            if !BootstrapOptimizer.pure(instruction["op"]) or instruction["result"] == none {
+                for argument in instruction["arguments"] {
+                    BootstrapOptimizer.mark_argument(used, argument);
+                }
+            }
+        }
+    }
+    changed: bool = true;
+    while changed {
+        changed = false;
+        for block in function["blocks"] {
+            for instruction in reverse(block["instructions"]) {
+                if instruction["result"] != none and has(used, instruction["result"]) {
+                    for argument in instruction["arguments"] {
+                        before: number = len(used);
+                        BootstrapOptimizer.mark_argument(used, argument);
+                        if len(used) != before {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for block in function["blocks"] {
+        kept: list<dynamic> = [];
+        for instruction in block["instructions"] {
+            if instruction["result"] == none or !BootstrapOptimizer.pure(instruction["op"]) or has(used, instruction["result"]) {
+                push(kept, instruction);
+            }
+        }
+        block["instructions"] = kept;
+    }
+    return none;
+}
+
+fn optimize(program: dict<string, dynamic>) -> dict<string, dynamic> {
+    before: list<string> = BootstrapMir.validate(program);
+    if len(before) > 0 {
+        throw "cannot optimize invalid MIR: {join(before, "; ")}";
+    }
+    for function in program["functions"] {
+        BootstrapOptimizer.fold_function(function);
+        BootstrapOptimizer.remove_unreachable(function);
+        BootstrapOptimizer.remove_dead_function(function);
+    }
+    after: list<string> = BootstrapMir.validate(program);
+    if len(after) > 0 {
+        throw "optimizer produced invalid MIR: {join(after, "; ")}";
+    }
+    return program;
+}
+
+fn lower_optimized(source: string) -> dict<string, dynamic> {
+    return BootstrapOptimizer.optimize(BootstrapMir.lower(source));
+}
+
+fn emit_json(source: string) -> string {
+    return json_encode(BootstrapOptimizer.lower_optimized(source));
+}

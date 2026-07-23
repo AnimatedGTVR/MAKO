@@ -611,6 +611,190 @@ static class MakoRay3D
         return null;
     }
 
+    // ── Surface (UV) painting ───────────────────────────────────────────────────
+    //
+    // Lets a script paint directly onto a model's surface: bind one of the
+    // existing preview render-textures (create_preview) as the model's own
+    // diffuse map, raycast the mouse against the model's real triangles to
+    // find where on the surface it's pointing (in UV space, via barycentric
+    // interpolation of the hit triangle's texcoords), then draw a dab into
+    // that render-texture at the matching pixel. Because the render-texture
+    // IS the model's diffuse map, the stroke shows up on the model itself
+    // immediately, without re-uploading any texture data by hand.
+
+    /// set_model_texture(model, preview) — binds preview's render-texture as
+    /// model's material-0 diffuse map, so subsequent draw_model() calls show
+    /// whatever has been painted into that preview. Pass none/-1 to unbind
+    /// and restore the model's original texture.
+    public static object? SetModelTexture(List<object?> a)
+    {
+        int modelId = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : -1;
+        if (modelId < 0 || modelId >= _models.Count)
+            throw new MakoError("Mako3D.set_model_texture(): invalid model handle");
+        var model = _models[modelId];
+        if (model.MaterialCount == 0)
+            throw new MakoError("Mako3D.set_model_texture(): model has no materials to paint onto");
+
+        int previewId = a.Count > 1 && a[1] != null ? (int)Convert.ToDouble(a[1]) : -1;
+        if (previewId < 0 || previewId >= _previews.Count || _previews[previewId] is not { } rt)
+            throw new MakoError("Mako3D.set_model_texture(): invalid preview handle");
+
+        var texture = rt.Texture;
+        Raylib.SetMaterialTexture(ref model, 0, MaterialMapIndex.Albedo, ref texture);
+        _models[modelId] = model;
+        return null;
+    }
+
+    /// paint_uv_hit(cam, model, [screen_x, screen_y]) → {"u":.., "v":..} of
+    /// the point on model's surface the mouse (or given screen point) is
+    /// pointing at, in the mesh's own 0..1 UV space — or none if the ray
+    /// misses every triangle. Checks every mesh/triangle in the model and
+    /// keeps the nearest hit, matching pick_face()'s own nearest-wins rule.
+    public static unsafe object? PaintUvHit(List<object?> a)
+    {
+        int camId = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : 0;
+        int modelId = a.Count > 1 ? (int)Convert.ToDouble(a[1]) : -1;
+        if (camId < 0 || camId >= _cameras.Count || modelId < 0 || modelId >= _models.Count)
+            return null;
+
+        var screenPos = a.Count > 3
+            ? new Vector2((float)Convert.ToDouble(a[2]), (float)Convert.ToDouble(a[3]))
+            : Raylib.GetMousePosition();
+        var ray = Raylib.GetScreenToWorldRay(screenPos, _cameras[camId]);
+        var model = _models[modelId];
+
+        float bestDist = float.MaxValue;
+        Vector2? bestUv = null;
+        for (int mi = 0; mi < model.MeshCount; mi++)
+        {
+            var mesh = model.Meshes[mi];
+            if (mesh.TexCoords == null) continue;
+            int triCount = mesh.Indices != null ? mesh.TriangleCount : mesh.VertexCount / 3;
+            for (int ti = 0; ti < triCount; ti++)
+            {
+                int i0, i1, i2;
+                if (mesh.Indices != null)
+                {
+                    i0 = mesh.Indices[ti * 3]; i1 = mesh.Indices[ti * 3 + 1]; i2 = mesh.Indices[ti * 3 + 2];
+                }
+                else
+                {
+                    i0 = ti * 3; i1 = ti * 3 + 1; i2 = ti * 3 + 2;
+                }
+
+                var p0 = VertexAt(mesh, i0);
+                var p1 = VertexAt(mesh, i1);
+                var p2 = VertexAt(mesh, i2);
+                var wp0 = Vector3.Transform(p0, model.Transform);
+                var wp1 = Vector3.Transform(p1, model.Transform);
+                var wp2 = Vector3.Transform(p2, model.Transform);
+
+                var hit = Raylib.GetRayCollisionTriangle(ray, wp0, wp1, wp2);
+                if (!hit.Hit || hit.Distance >= bestDist) continue;
+
+                var (b0, b1, b2) = Barycentric(hit.Point, wp0, wp1, wp2);
+                var uv0 = TexCoordAt(mesh, i0);
+                var uv1 = TexCoordAt(mesh, i1);
+                var uv2 = TexCoordAt(mesh, i2);
+                bestDist = hit.Distance;
+                bestUv = uv0 * b0 + uv1 * b1 + uv2 * b2;
+            }
+        }
+
+        if (bestUv is not { } uv) return null;
+        return new Dictionary<string, object?> { ["u"] = (double)uv.X, ["v"] = (double)uv.Y };
+    }
+
+    private static unsafe Vector3 VertexAt(Mesh mesh, int index) =>
+        new(mesh.Vertices[index * 3], mesh.Vertices[index * 3 + 1], mesh.Vertices[index * 3 + 2]);
+
+    private static unsafe Vector2 TexCoordAt(Mesh mesh, int index) =>
+        new(mesh.TexCoords[index * 2], mesh.TexCoords[index * 2 + 1]);
+
+    /// Barycentric weights of `p` (assumed already on the plane of p0/p1/p2,
+    /// as a real triangle-raycast hit always is) with respect to the
+    /// triangle's three corners — the standard way to interpolate any
+    /// per-vertex attribute (here, UV) at an arbitrary point on its face.
+    private static (float, float, float) Barycentric(Vector3 p, Vector3 p0, Vector3 p1, Vector3 p2)
+    {
+        var v0 = p1 - p0; var v1 = p2 - p0; var v2 = p - p0;
+        float d00 = Vector3.Dot(v0, v0), d01 = Vector3.Dot(v0, v1), d11 = Vector3.Dot(v1, v1);
+        float d20 = Vector3.Dot(v2, v0), d21 = Vector3.Dot(v2, v1);
+        float denom = d00 * d11 - d01 * d01;
+        if (Math.Abs(denom) < 1e-8f) return (1f, 0f, 0f);
+        float v = (d11 * d20 - d01 * d21) / denom;
+        float w = (d00 * d21 - d01 * d20) / denom;
+        float u = 1f - v - w;
+        return (u, v, w);
+    }
+
+    /// paint_dot(preview, u, v, radius_px, color) — draws a filled circle
+    /// into preview's render-texture at UV-space (u, v), converted to that
+    /// texture's own pixel coordinates. Call outside begin_3d()/end_3d() —
+    /// this opens its own 2D texture-mode draw, no camera/scene needed,
+    /// since painting is a flat 2D operation in the texture's own space.
+    public static object? PaintDot(List<object?> a)
+    {
+        int previewId = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : -1;
+        if (previewId < 0 || previewId >= _previews.Count || _previews[previewId] is not { } rt)
+            throw new MakoError("Mako3D.paint_dot(): invalid preview handle");
+        float u = a.Count > 1 ? (float)Convert.ToDouble(a[1]) : 0f;
+        float v = a.Count > 2 ? (float)Convert.ToDouble(a[2]) : 0f;
+        float radius = a.Count > 3 ? (float)Convert.ToDouble(a[3]) : 6f;
+        var color = a.Count > 4 ? MakoRay.ToColor(a[4]) : Color.Black;
+
+        float px = u * rt.Texture.Width;
+        // Render-textures are stored bottom-up (the same Y-flip DrawPreview
+        // already accounts for) — flip here too so a dab lands where the
+        // model visibly shows it, not mirrored vertically.
+        float py = (1f - v) * rt.Texture.Height;
+
+        Raylib.BeginTextureMode(rt);
+        Raylib.DrawCircle((int)px, (int)py, radius, color);
+        Raylib.EndTextureMode();
+        return null;
+    }
+
+    /// paint_line(preview, u0, v0, u1, v1, radius_px, color) — draws a
+    /// thick line between two UV-space points into preview's texture, for
+    /// continuous strokes between mouse-move samples rather than isolated
+    /// dots that leave gaps when the cursor moves faster than the frame rate.
+    public static object? PaintLine(List<object?> a)
+    {
+        int previewId = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : -1;
+        if (previewId < 0 || previewId >= _previews.Count || _previews[previewId] is not { } rt)
+            throw new MakoError("Mako3D.paint_line(): invalid preview handle");
+        float u0 = a.Count > 1 ? (float)Convert.ToDouble(a[1]) : 0f;
+        float v0 = a.Count > 2 ? (float)Convert.ToDouble(a[2]) : 0f;
+        float u1 = a.Count > 3 ? (float)Convert.ToDouble(a[3]) : 0f;
+        float v1 = a.Count > 4 ? (float)Convert.ToDouble(a[4]) : 0f;
+        float radius = a.Count > 5 ? (float)Convert.ToDouble(a[5]) : 6f;
+        var color = a.Count > 6 ? MakoRay.ToColor(a[6]) : Color.Black;
+
+        var p0 = new Vector2(u0 * rt.Texture.Width, (1f - v0) * rt.Texture.Height);
+        var p1 = new Vector2(u1 * rt.Texture.Width, (1f - v1) * rt.Texture.Height);
+
+        Raylib.BeginTextureMode(rt);
+        Raylib.DrawLineEx(p0, p1, radius * 2f, color);
+        Raylib.DrawCircleV(p1, radius, color);
+        Raylib.EndTextureMode();
+        return null;
+    }
+
+    /// clear_preview(preview, color) — fills preview's render-texture with a
+    /// flat color, e.g. to reset a paint texture back to a base coat.
+    public static object? ClearPreview(List<object?> a)
+    {
+        int previewId = a.Count > 0 ? (int)Convert.ToDouble(a[0]) : -1;
+        if (previewId < 0 || previewId >= _previews.Count || _previews[previewId] is not { } rt)
+            throw new MakoError("Mako3D.clear_preview(): invalid preview handle");
+        var color = a.Count > 1 ? MakoRay.ToColor(a[1]) : Color.White;
+        Raylib.BeginTextureMode(rt);
+        Raylib.ClearBackground(color);
+        Raylib.EndTextureMode();
+        return null;
+    }
+
     // ── Sky / background ──────────────────────────────────────────────────────
 
     /// sky(r, g, b)  — set sky color (same as clear but named for 3D context)
@@ -1489,6 +1673,9 @@ static class MakoRay3D
         ["create_preview"] = CreatePreview, ["begin_preview"] = BeginPreview,
         ["end_preview"]  = EndPreview,    ["draw_preview"] = DrawPreview,
         ["remove_preview"] = RemovePreview,
+        ["set_model_texture"] = SetModelTexture, ["paint_uv_hit"] = PaintUvHit,
+        ["paint_dot"]    = PaintDot,      ["paint_line"]   = PaintLine,
+        ["clear_preview"] = ClearPreview,
         ["cube"]         = DrawCube,      ["cube_raw"]     = DrawCubeRaw,
         ["cube_rot"]     = DrawCubeRot,   ["cube_rot_q"]   = DrawCubeRotQ,
         ["sphere_rot_q"] = DrawSphereRotQ,["capsule"]      = DrawCapsuleRotQ,

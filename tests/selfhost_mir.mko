@@ -1,0 +1,64 @@
+use "../selfhost/runtime.mko";
+use "../selfhost/lexer.mko";
+use "../selfhost/parser.mko";
+use "../selfhost/checker.mko";
+use "../selfhost/hir.mko";
+use "../selfhost/mir.mko";
+
+fn find_block(function, prefix) {
+    for block in function["blocks"] {
+        if starts_with(block["label"], prefix) {
+            return block;
+        }
+    }
+    return none;
+}
+
+fn has_jump_to(function, prefix) {
+    for block in function["blocks"] {
+        terminator = block["terminator"];
+        if terminator != none and terminator["op"] == "jump" {
+            for target in terminator["targets"] {
+                if starts_with(target, prefix) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+main() {
+    mir_test_source = "fn choose(value: i32) -> i32 {{\n" + "    if value > 10 {{\n" + "        return value * 2;\n" + "    }} else {{\n" + "        return value + 1;\n" + "    }}\n" + "}}\n" + "main() {{\n" + "    total: i32 = 0;\n" + "    while total < 3 {{\n" + "        total += 1;\n" + "        if total == 1 {{ continue; }}\n" + "        if total == 2 {{ break; }}\n" + "    }}\n" + "    result: i32 = choose(total);\n" + "    try {{\n" + "        throw \"boom\";\n" + "    }} catch err {{\n" + "        print err;\n" + "    }}\n" + "}}\n";
+    mir = BootstrapMir.lower(mir_test_source);
+    assert(mir["version"] == "mako.mir 1", "MIR version");
+    assert(len(BootstrapMir.validate(mir)) == 0, "generated MIR validates");
+    assert(len(mir["functions"]) == 2, "function plus main");
+    choose = mir["functions"][0];
+    assert(choose["blocks"][0]["terminator"]["op"] == "branch", "if lowers to branch");
+    assert(find_block(choose, "if.then") != none, "then block");
+    assert(find_block(choose, "if.else") != none, "else block");
+    main_function = mir["functions"][1];
+    assert(find_block(main_function, "while.condition") != none, "while condition block");
+    assert(find_block(main_function, "while.body") != none, "while body block");
+    assert(find_block(main_function, "while.exit") != none, "while exit block");
+    assert(has_jump_to(main_function, "while.condition"), "continue lowers to condition jump");
+    assert(has_jump_to(main_function, "while.exit"), "break lowers to exit jump");
+    assert(find_block(main_function, "try.body") != none, "try body block");
+    assert(find_block(main_function, "try.catch") != none, "try catch block");
+    assert(find_block(main_function, "try.body")["terminator"]["op"] == "throw", "throw terminator");
+    entry = main_function["blocks"][0];
+    assert(len(entry["instructions"]) > 0, "entry instructions");
+    assert(entry["terminator"]["op"] == "jump", "entry jumps to loop");
+    encoded = BootstrapMir.emit_json(mir_test_source);
+    assert(contains(encoded, "\"version\":\"mako.mir 1\""), "MIR JSON emission");
+    broken = BootstrapMir.lower(mir_test_source);
+    broken["functions"][0]["blocks"][0]["terminator"]["targets"][0] = "missing.block";
+    mir_validation_issues = BootstrapMir.validate(broken);
+    assert(len(mir_validation_issues) == 1 and contains(mir_validation_issues[0], "missing block"), "validator catches invalid target");
+    broken_value = BootstrapMir.lower(mir_test_source);
+    broken_value["functions"][0]["blocks"][0]["terminator"]["arguments"][0]["value"] = "%missing";
+    mir_validation_issues = BootstrapMir.validate(broken_value);
+    assert(len(mir_validation_issues) == 1 and contains(mir_validation_issues[0], "undefined temporary"), "validator catches undefined temporary");
+    print "MAKO self-host MIR tests pass!";
+}
